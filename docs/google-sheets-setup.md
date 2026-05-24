@@ -54,8 +54,31 @@ Row 1 must be the header row:
 Row 1 can be a title (e.g. **FORT WORTH EMPLOYEE ROSTER**). The bot scans the first 30 rows to find the header row with **RANK | RP NAME | CALLSIGN | ROLLS**.
 
 - **Blue section rows** (e.g. `OFFICE OF THE CHIEF`, `COMMAND STAFF`) are ignored automatically
-- Only rows with a **4-digit callsign** in column C are treated as roster slots
+- Only rows with a **4-digit callsign** or **cadet callsign** (`C-1` … `C-100`) in column C are treated as roster slots
 - **Open slot** = rank + callsign filled, **RP NAME** (column B) is empty
+
+### Cadet callsigns (C-1 to C-100)
+
+Add a **CADET** section on the roster tab with rows like:
+
+| RANK | RP NAME | CALLSIGN | ROLLS |
+|------|---------|----------|-------|
+| CADET | | C-1 | |
+| CADET | | C-2 | |
+| … | | … | |
+
+When someone clicks **Become Cadet**, the bot assigns the next open `C-N` slot and tells them **not to use it in-game**.
+
+### Automatic roster updates
+
+| Event | Bot action |
+|-------|------------|
+| **Become Cadet** | Assigns next open `C-1` … `C-100` cadet callsign |
+| **Fast Pass accepted** | Assigns open slot for the selected rank (e.g. Probationary Officer) + department callsign |
+| **Supervisor exam approved** | Moves member to open **Lieutenant** slot (configurable via `GOOGLE_SUPERVISOR_RANK_NAME`) |
+| **Promotion channel message** | Manual rank move (existing flow) |
+
+Rank names on the sheet must match Discord role names loosely (e.g. `Probationary Officer`, `LIEUTENANT`).
 - Promotion clears the old **RP NAME** and fills the first open slot in the new rank
 
 Example open slot: `COMMANDER` | *(empty)* | `3008` | `PATROL COMMANDER`

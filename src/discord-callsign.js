@@ -1,37 +1,65 @@
-const CALLSIGN_PREFIX_PATTERN = /^(\d{3,5})\s*\|\s*/;
-const CALLSIGN_WORD_PATTERN = /\b(\d{3,5})\b/;
+const ANY_CALLSIGN_PREFIX_PATTERN = /^((?:C-\d{1,3}|\d{3,5}))\s*\|\s*/i;
+const NUMERIC_CALLSIGN_WORD_PATTERN = /\b(\d{3,5})\b/;
+const CADET_CALLSIGN_WORD_PATTERN = /\b(C-\d{1,3})\b/i;
 
 function normalizeCallsign(value) {
   return String(value).replace(/\D/g, "");
 }
 
-function formatCallsign(value) {
-  const digits = normalizeCallsign(value);
-  if (!digits) return "";
+function formatCallsignForDisplay(value) {
+  const text = String(value).trim();
+  const cadetMatch = text.match(/^C-(\d{1,3})$/i);
+  if (cadetMatch) {
+    return `C-${Number.parseInt(cadetMatch[1], 10)}`;
+  }
+
+  const digits = normalizeCallsign(text);
+  if (!digits) return text;
   return digits.length >= 4 ? digits.slice(-4) : digits.padStart(4, "0");
 }
 
 function extractCallsignFromDisplayName(displayName) {
   const text = String(displayName ?? "").trim();
-  const prefixMatch = text.match(CALLSIGN_PREFIX_PATTERN);
+  const prefixMatch = text.match(ANY_CALLSIGN_PREFIX_PATTERN);
   if (prefixMatch) {
-    return normalizeCallsign(prefixMatch[1]);
+    return prefixMatch[1].toUpperCase().startsWith("C-")
+      ? formatCallsignForDisplay(prefixMatch[1])
+      : normalizeCallsign(prefixMatch[1]);
   }
 
-  const wordMatch = text.match(CALLSIGN_WORD_PATTERN);
+  const cadetMatch = text.match(CADET_CALLSIGN_WORD_PATTERN);
+  if (cadetMatch) {
+    return formatCallsignForDisplay(cadetMatch[1]);
+  }
+
+  const wordMatch = text.match(NUMERIC_CALLSIGN_WORD_PATTERN);
   return wordMatch ? normalizeCallsign(wordMatch[1]) : "";
 }
 
+function getRoleplayNameFromMember(member) {
+  const display = String(member?.displayName ?? "").trim();
+  const afterPipe = display.split("|").pop()?.trim();
+  if (afterPipe && afterPipe.length >= 2) {
+    return afterPipe;
+  }
+  if (display.length >= 2) {
+    return display;
+  }
+  return member.user.username;
+}
+
 function buildDisplayNameWithCallsign(displayName, newCallsign, roleplayName) {
-  const callsign = formatCallsign(newCallsign);
+  const callsign = formatCallsignForDisplay(newCallsign);
   const current = String(displayName ?? "").trim();
   const fallbackName = String(roleplayName ?? "").trim() || current;
 
   let updated;
-  if (CALLSIGN_PREFIX_PATTERN.test(current)) {
-    updated = current.replace(CALLSIGN_PREFIX_PATTERN, `${callsign} | `);
-  } else if (CALLSIGN_WORD_PATTERN.test(current)) {
-    updated = current.replace(CALLSIGN_WORD_PATTERN, callsign);
+  if (ANY_CALLSIGN_PREFIX_PATTERN.test(current)) {
+    updated = current.replace(ANY_CALLSIGN_PREFIX_PATTERN, `${callsign} | `);
+  } else if (CADET_CALLSIGN_WORD_PATTERN.test(current)) {
+    updated = current.replace(CADET_CALLSIGN_WORD_PATTERN, callsign);
+  } else if (NUMERIC_CALLSIGN_WORD_PATTERN.test(current)) {
+    updated = current.replace(NUMERIC_CALLSIGN_WORD_PATTERN, callsign);
   } else if (current.length > 0) {
     updated = `${callsign} | ${current}`;
   } else {
@@ -64,7 +92,7 @@ async function updateMemberCallsign(member, newCallsign, roleplayName) {
   }
 
   try {
-    await member.setNickname(nextNickname, "Roster promotion — callsign update");
+    await member.setNickname(nextNickname, "Roster callsign update");
     return { ok: true, nickname: nextNickname, changed: true };
   } catch (error) {
     return {
@@ -82,9 +110,13 @@ async function findMemberForRosterEntry(guild, { roleplayName, currentCallsign }
     await guild.members.fetch().catch(() => null);
   }
 
-  const byCallsign = guild.members.cache.find(
-    (member) => extractCallsignFromDisplayName(member.displayName) === normalizedCallsign,
-  );
+  const byCallsign = guild.members.cache.find((member) => {
+    const memberCallsign = extractCallsignFromDisplayName(member.displayName);
+    if (/^C-/i.test(String(currentCallsign))) {
+      return memberCallsign.toUpperCase() === String(currentCallsign).trim().toUpperCase();
+    }
+    return memberCallsign === normalizedCallsign;
+  });
   if (byCallsign) return byCallsign;
 
   return (
@@ -101,8 +133,9 @@ async function findMemberForRosterEntry(guild, { roleplayName, currentCallsign }
 }
 
 module.exports = {
-  formatCallsign,
+  formatCallsignForDisplay,
   extractCallsignFromDisplayName,
+  getRoleplayNameFromMember,
   buildDisplayNameWithCallsign,
   updateMemberCallsign,
   findMemberForRosterEntry,

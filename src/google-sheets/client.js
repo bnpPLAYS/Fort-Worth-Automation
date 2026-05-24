@@ -9,6 +9,10 @@ function normalizeEnv(value) {
   return String(value).trim().replace(/^["']|["']$/g, "");
 }
 
+function getCadetRankName() {
+  return normalizeEnv(process.env.GOOGLE_CADET_RANK_NAME) || "Cadet";
+}
+
 function getSpreadsheetId() {
   return normalizeEnv(process.env.GOOGLE_SHEETS_SPREADSHEET_ID);
 }
@@ -96,8 +100,17 @@ function findHeaderRowIndex(rows, maxScan = 30) {
   return -1;
 }
 
-function isDataRow(rank, callsign) {
-  return /^\d{3,5}$/.test(callsign.replace(/\s/g, ""));
+function isCadetCallsign(callsign) {
+  return /^C-\d{1,3}$/i.test(String(callsign).trim());
+}
+
+function isDepartmentCallsign(callsign) {
+  return /^\d{3,5}$/.test(String(callsign).replace(/\s/g, ""));
+}
+
+function shouldIncludeRosterRow(_rank, callsign) {
+  const normalizedCallsign = String(callsign).trim();
+  return isDepartmentCallsign(normalizedCallsign) || isCadetCallsign(normalizedCallsign);
 }
 
 async function getSheetsClient() {
@@ -145,7 +158,7 @@ async function getRosterRows() {
     const callsign = String(row[callsignIndex] ?? "").trim().replace(/\s/g, "");
     const rolls = rollsIndex === -1 ? "" : String(row[rollsIndex] ?? "").trim();
 
-    if (!isDataRow(rank, callsign)) {
+    if (!shouldIncludeRosterRow(rank, callsign)) {
       continue;
     }
 

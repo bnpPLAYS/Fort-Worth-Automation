@@ -1,5 +1,8 @@
 const { getRosterRows, batchUpdateCells, getRosterSheetName } = require("./client");
-const { ranksMatch } = require("../rank-matching");
+const {
+  findOpenSlotInRank,
+  assignMemberToOpenRank,
+} = require("./roster-assign");
 
 const PROMOTION_CHANNEL_ID = "1499207295895339048";
 
@@ -78,15 +81,6 @@ function findCurrentEntry(entries, roleplayName, currentCallsign) {
   );
 }
 
-function findOpenSlotInRank(entries, newRank) {
-  return entries.find(
-    (entry) =>
-      ranksMatch(newRank, entry.rank) &&
-      entry.callsign.length > 0 &&
-      entry.name.length === 0,
-  );
-}
-
 async function processPromotion({ roleplayName, currentCallsign, newRank }) {
   const { entries } = await getRosterRows();
 
@@ -129,4 +123,5 @@ module.exports = {
   PROMOTION_CHANNEL_ID,
   parsePromotionMessage,
   processPromotion,
+  assignMemberToOpenRank,
 };

@@ -12,6 +12,11 @@ const {
 const { getCooldownEnd, isOnCooldown, setCooldown } = require("./cooldowns");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { EMBED_COLOR, STAFF_PING_ROLE_ID } = require("./constants");
+const { getRoleplayNameFromMember, updateMemberCallsign } = require("./discord-callsign");
+const {
+  isSheetsConfigured,
+  assignMemberToOpenRank,
+} = require("./google-sheets/roster-assign");
 
 const PANEL_COMMAND = "-panelfastpass";
 const BUTTON_CUSTOM_ID = "fastpass_apply";
@@ -521,6 +526,31 @@ async function handleInteraction(interaction) {
       });
     }
 
+    let rosterSummary = "";
+    if (member && isSheetsConfigured()) {
+      const roleplayName = getRoleplayNameFromMember(member);
+
+      try {
+        const rosterResult = await assignMemberToOpenRank(roleplayName, application.rankLabel);
+        const nicknameResult = await updateMemberCallsign(
+          member,
+          rosterResult.newCallsign,
+          roleplayName,
+        );
+
+        rosterSummary =
+          `\nRoster: **${rosterResult.newRank}** — callsign **${rosterResult.newCallsign}**` +
+          (nicknameResult.ok && nicknameResult.changed
+            ? ` (nickname updated)`
+            : nicknameResult.ok
+              ? ""
+              : ` (nickname not updated: ${nicknameResult.reason})`);
+      } catch (error) {
+        console.error("Fast Pass roster assignment failed:", error);
+        rosterSummary = `\nRoster assignment failed: ${error.message}`;
+      }
+    }
+
     application.status = "accepted";
     application.rankLabel = rank?.label ?? "Unknown Rank";
     application.rankId = roleId;
@@ -538,18 +568,27 @@ async function handleInteraction(interaction) {
 
     const applicant = await interaction.client.users.fetch(application.userId).catch(() => null);
     if (applicant) {
-      await applicant
-        .send({
-          content:
-            `Congratulations! Your Fast Pass application has been **accepted**.\n\n` +
-            `You have been assigned the rank: **${application.rankLabel}**\n\n` +
-            `Please read over <#${GUIDE_CHANNEL_ID}> before getting started.`,
-        })
-        .catch(() => {});
+      let dmContent =
+        `Congratulations! Your Fast Pass application has been **accepted**.\n\n` +
+        `You have been assigned the rank: **${application.rankLabel}**\n\n` +
+        `Please read over <#${GUIDE_CHANNEL_ID}> before getting started.`;
+
+      if (rosterSummary.includes("callsign **")) {
+        const callsignMatch = rosterSummary.match(/callsign \*\*(.+?)\*\*/);
+        if (callsignMatch) {
+          dmContent +=
+            `\n\nYour department callsign is **${callsignMatch[1]}**. You may use this callsign in-game.`;
+        }
+      } else if (rosterSummary.includes("Roster assignment failed")) {
+        dmContent +=
+          "\n\nYour roster callsign could not be assigned automatically. Contact staff to be added to the database.";
+      }
+
+      await applicant.send({ content: dmContent }).catch(() => {});
     }
 
     await interaction.editReply({
-      content: `Application accepted. **${application.userTag}** was assigned **${application.rankLabel}**.`,
+      content: `Application accepted. **${application.userTag}** was assigned **${application.rankLabel}**.${rosterSummary}`,
       components: [],
     });
     return true;

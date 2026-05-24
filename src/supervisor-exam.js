@@ -13,7 +13,13 @@ const {
   STAFF_PING_ROLE_ID,
   SUPERVISOR_EXAM_ELIGIBILITY_ROLE_ID,
   SUPERVISOR_APPROVED_ROLE_IDS,
+  GOOGLE_SUPERVISOR_RANK_NAME,
 } = require("./constants");
+const { getRoleplayNameFromMember, updateMemberCallsign } = require("./discord-callsign");
+const {
+  isSheetsConfigured,
+  assignMemberToOpenRank,
+} = require("./google-sheets/roster-assign");
 
 const TYPE_SUPERVISOR_EXAM_ID = "support_type_supervisor_exam";
 const SUPERVISOR_EXAM_BEGIN_ID = "supervisor_exam_begin";
@@ -363,6 +369,32 @@ async function handleSupervisorExamInteraction(interaction) {
       });
     }
 
+    let rosterSummary = "";
+    if (member && isSheetsConfigured()) {
+      const roleplayName = getRoleplayNameFromMember(member);
+      const supervisorRank =
+        process.env.GOOGLE_SUPERVISOR_RANK_NAME || GOOGLE_SUPERVISOR_RANK_NAME;
+
+      try {
+        const rosterResult = await assignMemberToOpenRank(roleplayName, supervisorRank);
+        const nicknameResult = await updateMemberCallsign(
+          member,
+          rosterResult.newCallsign,
+          roleplayName,
+        );
+
+        rosterSummary =
+          `\nRoster: **${rosterResult.newRank}** — callsign **${rosterResult.newCallsign}**` +
+          (nicknameResult.ok && nicknameResult.changed ? " (nickname updated)" : "");
+
+        application.rosterCallsign = rosterResult.newCallsign;
+        application.rosterRank = rosterResult.newRank;
+      } catch (error) {
+        console.error("Supervisor exam roster assignment failed:", error);
+        rosterSummary = `\nRoster assignment failed: ${error.message}`;
+      }
+    }
+
     application.status = "accepted";
     application.reviewerTag = interaction.user.tag;
 
@@ -378,16 +410,23 @@ async function handleSupervisorExamInteraction(interaction) {
 
     const applicant = await interaction.client.users.fetch(application.userId).catch(() => null);
     if (applicant) {
-      await applicant
-        .send({
-          content:
-            "Congratulations! Your **Supervisor Exam** has been **approved**.\n\n" +
-            "Your roles have been updated. Welcome to the supervisor team.",
-        })
-        .catch(() => {});
+      let dmContent =
+        "Congratulations! Your **Supervisor Exam** has been **approved**.\n\n" +
+        "Your roles have been updated. Welcome to the supervisor team.";
+
+      if (application.rosterCallsign) {
+        dmContent += `\n\nYour roster callsign is **${application.rosterCallsign}** (${application.rosterRank}).`;
+      } else if (rosterSummary.includes("Roster assignment failed")) {
+        dmContent +=
+          "\n\nYour roster entry could not be updated automatically. Contact staff to be moved on the database.";
+      }
+
+      await applicant.send({ content: dmContent }).catch(() => {});
     }
 
-    await interaction.editReply(`Exam approved. **${application.userTag}** was updated with supervisor roles.`);
+    await interaction.editReply(
+      `Exam approved. **${application.userTag}** was updated with supervisor roles.${rosterSummary}`,
+    );
     return true;
   }
 

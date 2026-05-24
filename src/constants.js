@@ -7,4 +7,6 @@ module.exports = {
     "1507192467076812810",
     "1484950678081245355",
   ],
+  GOOGLE_CADET_RANK_NAME: "Cadet",
+  GOOGLE_SUPERVISOR_RANK_NAME: "Lieutenant",
 };

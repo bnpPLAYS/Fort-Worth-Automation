@@ -8,6 +8,8 @@ const {
 const { EMBED_COLOR } = require("./constants");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { isOnCooldown, setCooldown, getCooldownRemainingMs } = require("./cooldowns");
+const { getRoleplayNameFromMember, updateMemberCallsign } = require("./discord-callsign");
+const { isSheetsConfigured, assignCadetCallsign } = require("./google-sheets/roster-assign");
 
 const RA_COOLDOWN_MS = 15 * 60 * 1000;
 const RA_COOLDOWN_TYPE = "ride-along";
@@ -93,13 +95,39 @@ async function handleCadetInteraction(interaction) {
     });
   }
 
-  await interaction.editReply({
-    content:
-      "You have been enrolled as a **Cadet** and received your cadet roles.\n\n" +
-      "You must complete **2 ride-alongs** before you can become a **Probationary Officer**.\n\n" +
-      `When you are ready, file a ride-along request in <#${RA_REQUEST_CHANNEL_ID}> using this format:\n` +
-      "```\nRoblox User:\nDiscord User:\nAvailable For:\n```",
-  });
+  let reply =
+    "You have been enrolled as a **Cadet** and received your cadet roles.\n\n" +
+    "You must complete **2 ride-alongs** before you can become a **Probationary Officer**.\n\n" +
+    `When you are ready, file a ride-along request in <#${RA_REQUEST_CHANNEL_ID}> using this format:\n` +
+    "```\nRoblox User:\nDiscord User:\nAvailable For:\n```";
+
+  if (isSheetsConfigured()) {
+    const roleplayName = getRoleplayNameFromMember(member);
+
+    try {
+      const cadetAssignment = await assignCadetCallsign(roleplayName);
+      const nicknameResult = await updateMemberCallsign(
+        member,
+        cadetAssignment.callsign,
+        roleplayName,
+      );
+
+      reply +=
+        `\n\nYour assigned **cadet callsign** is **${cadetAssignment.callsign}**.` +
+        "\n**Do not use this callsign in-game.** You are not officially part of the department until you pass Fast Pass and receive a department callsign.";
+
+      if (nicknameResult.ok && nicknameResult.changed) {
+        reply += `\nYour Discord nickname was updated to \`${nicknameResult.nickname}\`.`;
+      }
+    } catch (error) {
+      console.error("Cadet callsign assignment failed:", error);
+      reply += `\n\nCould not assign a cadet callsign on the roster: ${error.message}`;
+    }
+  } else {
+    reply += "\n\nRoster assignment is not configured yet. Contact staff for your cadet callsign.";
+  }
+
+  await interaction.editReply({ content: reply });
 
   return true;
 }

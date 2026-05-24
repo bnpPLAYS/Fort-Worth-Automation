@@ -26,28 +26,39 @@ function saveCooldowns(cooldowns) {
   fs.writeFileSync(COOLDOWN_FILE, JSON.stringify(cooldowns, null, 2));
 }
 
-function getCooldownEnd(userId) {
-  const cooldowns = loadCooldowns();
-  return cooldowns[userId] ?? null;
+function getCooldownKey(userId, type) {
+  return type ? `${type}:${userId}` : userId;
 }
 
-function isOnCooldown(userId) {
-  const end = getCooldownEnd(userId);
+function getCooldownEnd(userId, type) {
+  const cooldowns = loadCooldowns();
+  return cooldowns[getCooldownKey(userId, type)] ?? null;
+}
+
+function isOnCooldown(userId, type) {
+  const end = getCooldownEnd(userId, type);
   if (!end) return false;
   if (Date.now() >= end) {
     const cooldowns = loadCooldowns();
-    delete cooldowns[userId];
+    delete cooldowns[getCooldownKey(userId, type)];
     saveCooldowns(cooldowns);
     return false;
   }
   return true;
 }
 
-function setCooldown(userId) {
+function setCooldown(userId, durationMs = COOLDOWN_MS, type) {
   const cooldowns = loadCooldowns();
-  cooldowns[userId] = Date.now() + COOLDOWN_MS;
+  const key = getCooldownKey(userId, type);
+  cooldowns[key] = Date.now() + durationMs;
   saveCooldowns(cooldowns);
-  return cooldowns[userId];
+  return cooldowns[key];
+}
+
+function getCooldownRemainingMs(userId, type) {
+  const end = getCooldownEnd(userId, type);
+  if (!end) return 0;
+  return Math.max(0, end - Date.now());
 }
 
 module.exports = {
@@ -55,4 +66,5 @@ module.exports = {
   getCooldownEnd,
   isOnCooldown,
   setCooldown,
+  getCooldownRemainingMs,
 };

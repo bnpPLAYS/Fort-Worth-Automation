@@ -7,6 +7,10 @@ const {
 } = require("discord.js");
 const { EMBED_COLOR } = require("./constants");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
+const { isOnCooldown, setCooldown, getCooldownRemainingMs } = require("./cooldowns");
+
+const RA_COOLDOWN_MS = 15 * 60 * 1000;
+const RA_COOLDOWN_TYPE = "ride-along";
 
 const CADET_PANEL_COMMAND = "-becomecadetpanel";
 const CADET_ENROLL_BUTTON_ID = "cadet_enroll";
@@ -28,7 +32,9 @@ function buildCadetPanelEmbed() {
       "# Become a Cadet\n\n" +
         "Click the button below to receive your **Cadet** roles and begin the ride-along process.\n\n" +
         "After enrolling, you must complete **2 ride-alongs** before you can become a **Probationary Officer**.\n\n" +
-        `File a ride-along request in <#${RA_REQUEST_CHANNEL_ID}> when you are ready.`,
+        `File a ride-along request in <#${RA_REQUEST_CHANNEL_ID}> when you are ready.\n\n` +
+        "**Format:**\n" +
+        "```\nRoblox User:\nDiscord User:\nAvailable For:\n```",
     )
     .setFooter({ text: "Fort Worth Police Department" });
 }
@@ -91,10 +97,46 @@ async function handleCadetInteraction(interaction) {
     content:
       "You have been enrolled as a **Cadet** and received your cadet roles.\n\n" +
       "You must complete **2 ride-alongs** before you can become a **Probationary Officer**.\n\n" +
-      `When you are ready, file a ride-along request in <#${RA_REQUEST_CHANNEL_ID}>.`,
+      `When you are ready, file a ride-along request in <#${RA_REQUEST_CHANNEL_ID}> using this format:\n` +
+      "```\nRoblox User:\nDiscord User:\nAvailable For:\n```",
   });
 
   return true;
+}
+
+function parseRideAlongMessage(content) {
+  const block = content.trim();
+
+  const labeledMatch = block.match(
+    /Roblox User:\s*(.+?)\s*Discord User:\s*(.+?)\s*Available For:\s*(.+)/is,
+  );
+
+  if (labeledMatch) {
+    return {
+      robloxUser: labeledMatch[1].trim(),
+      discordUser: labeledMatch[2].trim(),
+      availableFor: labeledMatch[3].trim(),
+    };
+  }
+
+  const robloxMatch = block.match(/Roblox User:\s*([\s\S]*?)(?=\r?\n\s*Discord User:|$)/i);
+  const discordMatch = block.match(/Discord User:\s*([\s\S]*?)(?=\r?\n\s*Available For:|$)/i);
+  const availableMatch = block.match(/Available For:\s*([\s\S]*?)$/i);
+
+  if (!robloxMatch || !discordMatch || !availableMatch) {
+    return null;
+  }
+
+  return {
+    robloxUser: robloxMatch[1].trim(),
+    discordUser: discordMatch[1].trim(),
+    availableFor: availableMatch[1].trim(),
+  };
+}
+
+function formatCooldownMinutes(remainingMs) {
+  const minutes = Math.ceil(remainingMs / 60000);
+  return minutes <= 1 ? "1 minute" : `${minutes} minutes`;
 }
 
 async function handleRideAlongMessage(message) {
@@ -103,6 +145,21 @@ async function handleRideAlongMessage(message) {
   if (hasProcessed(`ra:${message.id}`)) return false;
 
   markProcessed(`ra:${message.id}`);
+
+  const parsed = parseRideAlongMessage(message.content);
+  if (!parsed || !parsed.robloxUser || !parsed.discordUser || !parsed.availableFor) {
+    return true;
+  }
+
+  if (isOnCooldown(message.author.id, RA_COOLDOWN_TYPE)) {
+    const remainingMs = getCooldownRemainingMs(message.author.id, RA_COOLDOWN_TYPE);
+    await message
+      .reply(
+        `You can only send one ride-along request every **15 minutes**. Try again in **${formatCooldownMinutes(remainingMs)}**.`,
+      )
+      .catch(() => null);
+    return true;
+  }
 
   const notificationChannel = await message.client.channels
     .fetch(RA_NOTIFICATION_CHANNEL_ID)
@@ -114,14 +171,24 @@ async function handleRideAlongMessage(message) {
   }
 
   const rolePings = RA_PING_ROLE_IDS.map((id) => `<@&${id}>`).join(" ");
+  const embed = new EmbedBuilder()
+    .setColor(EMBED_COLOR)
+    .setTitle("Ride-Along Request")
+    .setDescription(`Submitted by ${message.author} in <#${RA_REQUEST_CHANNEL_ID}>`)
+    .addFields(
+      { name: "Roblox User", value: parsed.robloxUser, inline: true },
+      { name: "Discord User", value: parsed.discordUser, inline: true },
+      { name: "Available For", value: parsed.availableFor, inline: false },
+    )
+    .setURL(message.url);
 
   await notificationChannel.send({
-    content:
-      `${rolePings}\n\n` +
-      `A **ride-along request** is pending from ${message.author} in <#${RA_REQUEST_CHANNEL_ID}>.\n` +
-      `[Jump to request](${message.url})`,
+    content: `${rolePings}\n\nA **ride-along request** is pending.\n[Jump to request](${message.url})`,
+    embeds: [embed],
     allowedMentions: { roles: RA_PING_ROLE_IDS },
   });
+
+  setCooldown(message.author.id, RA_COOLDOWN_MS, RA_COOLDOWN_TYPE);
 
   return true;
 }

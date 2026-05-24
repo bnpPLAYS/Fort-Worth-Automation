@@ -11,6 +11,7 @@ const {
 } = require("discord.js");
 const { getCooldownEnd, isOnCooldown, setCooldown } = require("./cooldowns");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
+const { EMBED_COLOR } = require("./constants");
 
 const PANEL_COMMAND = "-panelfastpass";
 const BUTTON_CUSTOM_ID = "fastpass_apply";
@@ -138,7 +139,7 @@ function buildModal(title, customId, fields) {
 
 function buildPanelEmbed() {
   return new EmbedBuilder()
-    .setColor(0x5865f2)
+    .setColor(EMBED_COLOR)
     .setTitle("Fast Pass Application")
     .setDescription(
       "Click **Fast Pass** below to begin your application.\n\n" +
@@ -160,11 +161,8 @@ function buildSubmissionEmbed(application) {
   const { userId, userTag, stage1, stage2, durationMs, status, reviewerTag, rankLabel, denyReason } =
     application;
 
-  const color =
-    status === "accepted" ? 0x57f287 : status === "denied" ? 0xed4245 : 0x5865f2;
-
   const embed = new EmbedBuilder()
-    .setColor(color)
+    .setColor(EMBED_COLOR)
     .setTitle(
       status === "accepted"
         ? "Fast Pass Application — Accepted"

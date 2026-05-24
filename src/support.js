@@ -14,6 +14,7 @@ const {
 const { buildPanelEmbed, buildPanelButton } = require("./fastpass");
 const { getTicket, saveTicket, deleteTicket, findOpenTicketByOpener } = require("./tickets-store");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
+const { EMBED_COLOR } = require("./constants");
 
 const SUPPORT_PANEL_COMMAND = "-supportpanel";
 
@@ -99,7 +100,7 @@ function truncateField(value) {
 
 function buildAssistanceHubEmbed() {
   return new EmbedBuilder()
-    .setColor(0x5865f2)
+    .setColor(EMBED_COLOR)
     .setTitle("Assistance Hub")
     .setDescription(
       "**General Support**\n" +
@@ -163,7 +164,7 @@ function buildReportUserSelect() {
 
 function buildInternalAffairsEmbed(opener, reportedUser, whatHappened) {
   return new EmbedBuilder()
-    .setColor(0x2b2d31)
+    .setColor(EMBED_COLOR)
     .setTitle("Internal Affairs")
     .setDescription(
       `Thank you for contacting our Internal Affairs Unit, ${opener}. Our support team will be with you shortly. ` +
@@ -178,7 +179,7 @@ function buildInternalAffairsEmbed(opener, reportedUser, whatHappened) {
 
 function buildGeneralSupportEmbed(opener) {
   return new EmbedBuilder()
-    .setColor(0x2b2d31)
+    .setColor(EMBED_COLOR)
     .setTitle("General Support")
     .setDescription(
       `Welcome to your General Support Ticket, ${opener}. Our support team will be with you shortly. ` +
@@ -191,7 +192,7 @@ function buildGeneralSupportEmbed(opener) {
 
 function buildStaffPanelEmbed() {
   return new EmbedBuilder()
-    .setColor(0x5865f2)
+    .setColor(EMBED_COLOR)
     .setTitle("Staff Ticket Panel")
     .setDescription(
       "Use the controls below to manage this ticket.\n\n" +

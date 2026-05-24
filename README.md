@@ -43,8 +43,10 @@ Discord bot built with [discord.js](https://discord.js.org/) v14.
 3. **Report** — select a member, describe what happened, opens `{member}-report` in the report category with an Internal Affairs embed. `@here` is pinged after the opener sends their first message (evidence/clips).
 4. **Other** — opens `{username}-support` in the general support category with a welcome embed and `@here` ping.
 5. Staff use `/staffpanel` inside a ticket channel for **Close Ticket** (DMs reason to opener), **Close Request**, or **Ticket Advance** (escalates category and pings staff role).
+6. **Close Request** sends the opener a **Close Ticket** button they can press to self-close.
+7. When any ticket closes, a `.txt` transcript (messages + attachment/image links) is sent to channel `1485036121673961512`.
 
-The bot needs **Manage Channels** permission and its role must be above ticket categories and the staff role.
+The bot needs **Manage Channels** permission and its role must be above ticket categories and the staff role. The bot also needs **Read Message History** in ticket channels for transcripts.
 
 ## Deploy to VPS
 

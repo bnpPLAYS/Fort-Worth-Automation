@@ -4,12 +4,18 @@ const { google } = require("googleapis");
 
 let sheetsClient = null;
 
+function normalizeEnv(value) {
+  if (!value) return "";
+  return String(value).trim().replace(/^["']|["']$/g, "");
+}
+
 function getSpreadsheetId() {
-  return process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+  return normalizeEnv(process.env.GOOGLE_SHEETS_SPREADSHEET_ID);
 }
 
 function getRosterSheetName() {
-  return process.env.GOOGLE_ROSTER_SHEET_NAME || "Roster";
+  const sheetName = normalizeEnv(process.env.GOOGLE_ROSTER_SHEET_NAME);
+  return sheetName || "Roster";
 }
 
 function getCredentialsPath() {

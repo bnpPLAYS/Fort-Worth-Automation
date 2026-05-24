@@ -14,6 +14,21 @@ You can also use `RP Name:` instead of `Roleplay Name:`.
 
 Callsigns should be the **4-digit number** from column C (e.g. `3005`, not `30-05`).
 
+### Rank eligibility (Discord roles)
+
+The person being promoted must **already have** a Discord role whose name matches `New Rank:` (case-insensitive). For example, you cannot request **Chief** unless you have a **Chief** role in Discord.
+
+Staff with **Manage Server** or the staff ping role can post promotions for others without this check.
+
+### Discord nickname
+
+After a successful promotion, the bot updates the member's nickname:
+
+- `3000 | J. Forman` → `3005 | J. Forman` (replaces the leading callsign)
+- If no callsign is in the nickname, it adds one: `3005 | YourName`
+
+The bot needs **Manage Nicknames** and its role must be above the member's highest role.
+
 ## Your sheet layout
 
 Row 1 must be the header row:

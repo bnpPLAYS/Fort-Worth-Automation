@@ -6,6 +6,8 @@ const {
   parsePromotionMessage,
   processPromotion,
 } = require("./google-sheets/promotion");
+const { findMemberForRosterEntry, updateMemberCallsign } = require("./discord-callsign");
+const { canBypassRankEligibility, validatePromotionRank } = require("./rank-eligibility");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 
 async function handlePromotionMessage(message) {
@@ -23,10 +25,36 @@ async function handlePromotionMessage(message) {
     return true;
   }
 
+  const staffBypass = canBypassRankEligibility(message.member);
+  const targetMember = await findMemberForRosterEntry(message.guild, parsed);
+
+  if (!targetMember && !staffBypass) {
+    await message.reply(
+      "Could not find your Discord profile for this promotion. Put your current callsign in your nickname (e.g. `3000 | J. Forman`) and try again.",
+    );
+    return true;
+  }
+
+  const rankCheck = validatePromotionRank(targetMember ?? message.member, parsed.newRank, {
+    bypass: staffBypass,
+  });
+
+  if (!rankCheck.ok) {
+    await message.reply(rankCheck.message);
+    return true;
+  }
+
+  const memberToUpdate = targetMember ?? rankCheck.member;
   const processingMessage = await message.reply("Updating roster in Google Sheets...");
 
   try {
     const result = await processPromotion(parsed);
+
+    const nicknameResult = await updateMemberCallsign(
+      memberToUpdate,
+      result.newCallsign,
+      parsed.roleplayName,
+    );
 
     const embed = new EmbedBuilder()
       .setColor(EMBED_COLOR)
@@ -49,6 +77,23 @@ async function handlePromotionMessage(message) {
 
     if (result.rolls) {
       embed.addFields({ name: "Rolls / Role", value: result.rolls, inline: true });
+    }
+
+    if (nicknameResult.ok && nicknameResult.changed) {
+      embed.addFields({
+        name: "Discord nickname",
+        value: `Updated to \`${nicknameResult.nickname}\``,
+      });
+    } else if (nicknameResult.ok && !nicknameResult.changed) {
+      embed.addFields({
+        name: "Discord nickname",
+        value: "Already had the correct callsign format.",
+      });
+    } else {
+      embed.addFields({
+        name: "Discord nickname",
+        value: `Could not update: ${nicknameResult.reason}`,
+      });
     }
 
     await processingMessage.edit({ content: null, embeds: [embed] });

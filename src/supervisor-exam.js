@@ -21,29 +21,34 @@ const EXAM_FIELDS = [
   {
     id: "ready",
     number: 1,
+    modalLabel: "Why are you ready to become supervisor?",
     question: "Why do you believe you are ready for a supervisor position?",
   },
   {
     id: "officer_arguing",
     number: 2,
+    modalLabel: "Officer argues with civilians; response?",
     question:
       "An officer under your supervision begins arguing with civilians. What would you do?",
   },
   {
     id: "talking_over",
     number: 3,
+    modalLabel: "How do you regain control of a scene?",
     question:
       "You arrive on scene, and multiple officers are talking over each other. How do you regain control?",
   },
   {
     id: "driver_exits",
     number: 4,
+    modalLabel: "Driver exits during stop; your response?",
     question:
       "During a traffic stop, the driver suddenly exits the vehicle and begins walking toward your officers. What would you do?",
   },
   {
     id: "stolen_vehicle",
     number: 5,
+    modalLabel: "Stolen vehicle alert; how coordinate?",
     question:
       "During the stop, dispatch advises that the vehicle was reported stolen. How would you coordinate the situation?",
   },
@@ -106,8 +111,8 @@ function buildSupervisorExamModal() {
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId(field.id)
-          .setLabel(`Question ${field.number}`)
-          .setPlaceholder(`Answer question ${field.number} (minimum ${MIN_WORDS} words)`)
+          .setLabel(field.modalLabel)
+          .setPlaceholder(`Minimum ${MIN_WORDS} words — see full question in the exam preview above`)
           .setStyle(TextInputStyle.Paragraph)
           .setRequired(true)
           .setMaxLength(4000),

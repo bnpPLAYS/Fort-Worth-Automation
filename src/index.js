@@ -14,6 +14,7 @@ const {
   handleCadetInteraction,
   handleRideAlongMessage,
 } = require("./cadet");
+const { handlePromotionMessage } = require("./promotion-handler");
 const {
   handleSupportPanelCommand,
   handleStaffPanelCommand,
@@ -70,6 +71,7 @@ client.on(Events.MessageCreate, async (message) => {
     await handleSupportPanelCommand(message);
     await handleSupportMessage(message);
     await handleRideAlongMessage(message);
+    await handlePromotionMessage(message);
   } catch (error) {
     console.error("Message handler error:", error);
   }

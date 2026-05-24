@@ -1,6 +1,14 @@
 require("dotenv").config();
 
-const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require("discord.js");
+const {
+  Client,
+  Events,
+  GatewayIntentBits,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+} = require("discord.js");
+const { handlePanelCommand, handleInteraction } = require("./fastpass");
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.CLIENT_ID;
@@ -15,7 +23,13 @@ if (!clientId) {
   process.exit(1);
 }
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
+});
 
 const commands = [
   new SlashCommandBuilder()
@@ -33,11 +47,31 @@ client.once(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
 });
 
-client.on(Events.InteractionCreate, async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
+client.on(Events.MessageCreate, async (message) => {
+  try {
+    await handlePanelCommand(message);
+  } catch (error) {
+    console.error("Message handler error:", error);
+  }
+});
 
-  if (interaction.commandName === "ping") {
-    await interaction.reply("Pong!");
+client.on(Events.InteractionCreate, async (interaction) => {
+  try {
+    const handled = await handleInteraction(interaction);
+    if (handled) return;
+
+    if (interaction.isChatInputCommand() && interaction.commandName === "ping") {
+      await interaction.reply("Pong!");
+    }
+  } catch (error) {
+    console.error("Interaction handler error:", error);
+
+    const reply = { content: "Something went wrong. Please try again.", ephemeral: true };
+    if (interaction.replied || interaction.deferred) {
+      await interaction.followUp(reply).catch(() => {});
+    } else if (interaction.isRepliable()) {
+      await interaction.reply(reply).catch(() => {});
+    }
   }
 });
 

@@ -27,6 +27,13 @@ Discord bot built with [discord.js](https://discord.js.org/) v14.
 
 5. In Discord, type `/ping` — the bot should reply with `Pong!`
 
+## Fast Pass panel
+
+1. In the [Developer Portal](https://discord.com/developers/applications) → **Bot**, enable **Message Content Intent** (required for `-panelfastpass`).
+2. Restart the bot: `npm start`
+3. In a channel, send `-panelfastpass` (requires **Manage Server** permission).
+4. Users click the grey **Apply for Fast Pass** button, fill out the modal, and submissions are sent to channel `1498803252626718833`.
+
 ## Deploy to VPS
 
 ```bash

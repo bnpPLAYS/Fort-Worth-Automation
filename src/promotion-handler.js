@@ -7,7 +7,11 @@ const {
   processPromotion,
 } = require("./google-sheets/promotion");
 const { findMemberForRosterEntry, updateMemberCallsign } = require("./discord-callsign");
-const { canBypassRankEligibility, validatePromotionRank } = require("./rank-eligibility");
+const {
+  canBypassRankEligibility,
+  validatePromotionRequester,
+} = require("./promotion-auth");
+const { validatePromotionRank } = require("./rank-eligibility");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 
 const ROLE_REQUEST_DELETE_MS = 3 * 60 * 1000;
@@ -40,16 +44,25 @@ async function handlePromotionMessage(message) {
   }
 
   const staffBypass = canBypassRankEligibility(message.member);
-  const targetMember = await findMemberForRosterEntry(message.guild, parsed);
 
-  if (!targetMember && !staffBypass) {
+  const requesterCheck = validatePromotionRequester(message.member, parsed, { staffBypass });
+  if (!requesterCheck.ok) {
+    await message.reply(requesterCheck.message);
+    return true;
+  }
+
+  const targetMember = staffBypass
+    ? await findMemberForRosterEntry(message.guild, parsed)
+    : requesterCheck.targetMember;
+
+  if (!targetMember) {
     await message.reply(
-      "Could not find your Discord profile for this promotion. Put your current callsign in your nickname (e.g. `3000 | J. Forman`) and try again.",
+      "Could not find a Discord member for this promotion. They need their callsign or RP name in their nickname (e.g. `3000 | J. Forman`).",
     );
     return true;
   }
 
-  const rankCheck = validatePromotionRank(targetMember ?? message.member, parsed.newRank, {
+  const rankCheck = validatePromotionRank(targetMember, parsed.newRank, {
     bypass: staffBypass,
   });
 

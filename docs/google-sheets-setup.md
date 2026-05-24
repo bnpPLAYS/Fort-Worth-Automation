@@ -14,6 +14,14 @@ You can also use `RP Name:` instead of `Roleplay Name:`.
 
 Callsigns should be the **4-digit number** from column C (e.g. `3005`, not `30-05`).
 
+### Your own entry only
+
+You can only update **your own** roster row. **Roleplay Name** must appear in your Discord nickname or username (e.g. nickname `3000 | J. Forman` with Roleplay Name `J. Forman`).
+
+If your nickname includes a callsign, **Current Callsign** must match it.
+
+Staff with **Manage Server** or the staff ping role can post promotions for other members.
+
 ### Rank eligibility (Discord roles)
 
 The person being promoted must **already have** a Discord role whose name matches `New Rank:` (case-insensitive). For example, you cannot request **Chief** unless you have a **Chief** role in Discord.

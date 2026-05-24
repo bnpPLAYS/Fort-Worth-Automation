@@ -78,6 +78,10 @@ function buildRideAlongEmbed(request) {
     )
     .setURL(request.requestUrl);
 
+  if (request.roleplayName) {
+    embed.addFields({ name: "Roster Name", value: request.roleplayName, inline: true });
+  }
+
   if (request.claimedById) {
     embed.addFields({
       name: "Claimed By",

@@ -74,7 +74,7 @@ When someone clicks **Become Cadet**, the bot assigns the next open `C-N` slot a
 When a valid ride-along request is posted, staff with roles `1484950025472704643` or `1484950653045440532` see **Claim**, **Pass**, and **Fail** in the employee notification channel.
 
 1. **Claim** — take charge of the ride-along (required before Pass/Fail)
-2. **Pass** — removes cadet roles, assigns **Probationary Officer** Discord role, assigns an open **Probationary Officer** roster slot + callsign
+2. **Pass** — clears cadet row on the sheet, assigns open **Probationary Officer** callsign, updates Discord nickname, and gives the Probationary Officer role
 3. **Fail** — removes cadet roles, clears their cadet roster row, **3-day cooldown** before they can click **Become Cadet** again
 
 ### Automatic roster updates

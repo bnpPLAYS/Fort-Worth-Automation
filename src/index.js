@@ -10,6 +10,11 @@ const {
 } = require("discord.js");
 const { handlePanelCommand, handleInteraction, MIN_WORDS } = require("./fastpass");
 const {
+  handleCadetPanelCommand,
+  handleCadetInteraction,
+  handleRideAlongMessage,
+} = require("./cadet");
+const {
   handleSupportPanelCommand,
   handleStaffPanelCommand,
   handleSupportInteraction,
@@ -61,8 +66,10 @@ client.once(Events.ClientReady, (readyClient) => {
 client.on(Events.MessageCreate, async (message) => {
   try {
     await handlePanelCommand(message);
+    await handleCadetPanelCommand(message);
     await handleSupportPanelCommand(message);
     await handleSupportMessage(message);
+    await handleRideAlongMessage(message);
   } catch (error) {
     console.error("Message handler error:", error);
   }
@@ -82,6 +89,9 @@ function isBenignInteractionError(error) {
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     let handled = await handleInteraction(interaction);
+    if (handled) return;
+
+    handled = await handleCadetInteraction(interaction);
     if (handled) return;
 
     handled = await handleSupportInteraction(interaction);

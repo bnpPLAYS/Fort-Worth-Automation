@@ -4,6 +4,7 @@ const {
   ButtonStyle,
   EmbedBuilder,
   ModalBuilder,
+  PermissionFlagsBits,
   TextInputBuilder,
   TextInputStyle,
 } = require("discord.js");
@@ -12,8 +13,12 @@ const { EMBED_COLOR } = require("./constants");
 const TYPE_SUPERVISOR_EXAM_ID = "support_type_supervisor_exam";
 const SUPERVISOR_EXAM_BEGIN_ID = "supervisor_exam_begin";
 const SUPERVISOR_EXAM_MODAL_ID = "supervisor_exam_modal";
+const EXAM_APPROVE_PREFIX = "supervisor_exam_approve:";
+const EXAM_DENY_PREFIX = "supervisor_exam_deny:";
+const EXAM_DENY_MODAL_PREFIX = "supervisor_exam_deny_modal:";
 
 const REQUIRED_ROLE_ID = "1501804405366718534";
+const APPROVED_ROLE_ID = "1501804405366718534";
 const SUBMISSION_CHANNEL_ID = "1507976263141163008";
 const MIN_WORDS = 20;
 
@@ -55,6 +60,7 @@ const EXAM_FIELDS = [
 ];
 
 const examSessions = new Map();
+const examApplications = new Map();
 
 function countWords(text) {
   const normalized = text
@@ -76,6 +82,17 @@ function formatDuration(ms) {
 
 function truncateField(value) {
   return value.length > 1024 ? value.slice(0, 1021) + "..." : value;
+}
+
+function canReviewExam(member) {
+  return (
+    member?.permissions?.has(PermissionFlagsBits.ManageRoles) ||
+    member?.permissions?.has(PermissionFlagsBits.ManageGuild)
+  );
+}
+
+function getExamApplication(appId) {
+  return examApplications.get(appId) ?? null;
 }
 
 function buildExamQuestionsEmbed() {
@@ -123,17 +140,25 @@ function buildSupervisorExamModal() {
   return modal;
 }
 
-function buildSubmissionEmbed(user, answers, durationMs) {
+function buildSubmissionEmbed(application) {
+  const { userId, userTag, answers, durationMs, status, reviewerTag, denyReason } = application;
+
   const embed = new EmbedBuilder()
     .setColor(EMBED_COLOR)
-    .setTitle("New Supervisor Exam Submission")
-    .setDescription(`Applicant: ${user} (\`${user.tag}\`)\nUser ID: \`${user.id}\``)
+    .setTitle(
+      status === "accepted"
+        ? "Supervisor Exam — Approved"
+        : status === "denied"
+          ? "Supervisor Exam — Denied"
+          : "New Supervisor Exam Submission",
+    )
+    .setDescription(`Applicant: <@${userId}> (\`${userTag}\`)\nUser ID: \`${userId}\``)
     .addFields({
       name: "Completion Time",
       value: formatDuration(durationMs),
       inline: true,
     })
-    .setTimestamp();
+    .setTimestamp(application.submittedAt);
 
   for (const field of EXAM_FIELDS) {
     embed.addFields({
@@ -142,7 +167,28 @@ function buildSubmissionEmbed(user, answers, durationMs) {
     });
   }
 
+  if (status === "denied" && denyReason) {
+    embed.addFields({ name: "Denial Reason", value: truncateField(denyReason) });
+  }
+
+  if (reviewerTag) {
+    embed.setFooter({ text: `Reviewed by ${reviewerTag}` });
+  }
+
   return embed;
+}
+
+function buildReviewButtons(appId) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${EXAM_APPROVE_PREFIX}${appId}`)
+      .setLabel("Approve")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`${EXAM_DENY_PREFIX}${appId}`)
+      .setLabel("Deny")
+      .setStyle(ButtonStyle.Danger),
+  );
 }
 
 async function handleSupervisorExamInteraction(interaction) {
@@ -224,14 +270,30 @@ async function handleSupervisorExamInteraction(interaction) {
       return true;
     }
 
-    const durationMs = Date.now() - session.startTime;
+    const endTime = Date.now();
+    const durationMs = endTime - session.startTime;
+    const appId = `${interaction.user.id}-${endTime}`;
     examSessions.delete(interaction.user.id);
+
+    const application = {
+      appId,
+      userId: interaction.user.id,
+      userTag: interaction.user.tag,
+      guildId: interaction.guildId,
+      answers,
+      durationMs,
+      submittedAt: endTime,
+      status: "pending",
+    };
+
+    examApplications.set(appId, application);
 
     const submissionsChannel = await interaction.client.channels
       .fetch(SUBMISSION_CHANNEL_ID)
       .catch(() => null);
 
     if (!submissionsChannel?.isTextBased()) {
+      examApplications.delete(appId);
       await interaction.editReply(
         "Your exam could not be submitted because the submissions channel was not found. Contact an admin.",
       );
@@ -239,10 +301,15 @@ async function handleSupervisorExamInteraction(interaction) {
     }
 
     try {
-      await submissionsChannel.send({
-        embeds: [buildSubmissionEmbed(interaction.user, answers, durationMs)],
+      const submissionMessage = await submissionsChannel.send({
+        embeds: [buildSubmissionEmbed(application)],
+        components: [buildReviewButtons(appId)],
       });
+
+      application.messageId = submissionMessage.id;
+      application.channelId = submissionsChannel.id;
     } catch (error) {
+      examApplications.delete(appId);
       console.error("Failed to send supervisor exam submission:", error);
       await interaction.editReply(
         "Your exam could not be submitted due to a Discord error. Contact an admin.",
@@ -253,6 +320,148 @@ async function handleSupervisorExamInteraction(interaction) {
     await interaction.editReply(
       `Your supervisor exam has been submitted! It took you **${formatDuration(durationMs)}** to complete.`,
     );
+    return true;
+  }
+
+  if (interaction.isButton() && interaction.customId.startsWith(EXAM_APPROVE_PREFIX)) {
+    const appId = interaction.customId.slice(EXAM_APPROVE_PREFIX.length);
+    const application = getExamApplication(appId);
+
+    if (!application || application.status !== "pending") {
+      await interaction.reply({ content: "This exam submission is no longer pending.", ephemeral: true });
+      return true;
+    }
+
+    if (!canReviewExam(interaction.member)) {
+      await interaction.reply({
+        content: "You need **Manage Roles** or **Manage Server** to review supervisor exams.",
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const guild = await interaction.client.guilds.fetch(application.guildId).catch(() => null);
+    const member = await guild?.members.fetch(application.userId).catch(() => null);
+
+    if (member && guild) {
+      await member.roles.add(APPROVED_ROLE_ID).catch((error) => {
+        console.error("Failed to assign supervisor role:", error);
+      });
+    }
+
+    application.status = "accepted";
+    application.reviewerTag = interaction.user.tag;
+
+    const channel = await interaction.client.channels.fetch(application.channelId).catch(() => null);
+    const message = await channel?.messages.fetch(application.messageId).catch(() => null);
+
+    if (message) {
+      await message.edit({
+        embeds: [buildSubmissionEmbed(application)],
+        components: [],
+      });
+    }
+
+    const applicant = await interaction.client.users.fetch(application.userId).catch(() => null);
+    if (applicant) {
+      await applicant
+        .send({
+          content:
+            "Congratulations! Your **Supervisor Exam** has been **approved**.\n\n" +
+            "You have been granted the supervisor role. Welcome to the team.",
+        })
+        .catch(() => {});
+    }
+
+    await interaction.editReply(`Exam approved. **${application.userTag}** was given the supervisor role.`);
+    return true;
+  }
+
+  if (interaction.isButton() && interaction.customId.startsWith(EXAM_DENY_PREFIX)) {
+    const appId = interaction.customId.slice(EXAM_DENY_PREFIX.length);
+    const application = getExamApplication(appId);
+
+    if (!application || application.status !== "pending") {
+      await interaction.reply({ content: "This exam submission is no longer pending.", ephemeral: true });
+      return true;
+    }
+
+    if (!canReviewExam(interaction.member)) {
+      await interaction.reply({
+        content: "You need **Manage Roles** or **Manage Server** to review supervisor exams.",
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    const modal = new ModalBuilder()
+      .setCustomId(`${EXAM_DENY_MODAL_PREFIX}${appId}`)
+      .setTitle("Deny Supervisor Exam")
+      .addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId("deny_reason")
+            .setLabel("Reason for denial")
+            .setPlaceholder("Explain why this exam was denied...")
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(true)
+            .setMaxLength(1000),
+        ),
+      );
+
+    await interaction.showModal(modal);
+    return true;
+  }
+
+  if (interaction.isModalSubmit() && interaction.customId.startsWith(EXAM_DENY_MODAL_PREFIX)) {
+    const appId = interaction.customId.slice(EXAM_DENY_MODAL_PREFIX.length);
+    const application = getExamApplication(appId);
+
+    if (!application || application.status !== "pending") {
+      await interaction.reply({ content: "This exam submission is no longer pending.", ephemeral: true });
+      return true;
+    }
+
+    if (!canReviewExam(interaction.member)) {
+      await interaction.reply({
+        content: "You need **Manage Roles** or **Manage Server** to review supervisor exams.",
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const denyReason = interaction.fields.getTextInputValue("deny_reason");
+
+    application.status = "denied";
+    application.denyReason = denyReason;
+    application.reviewerTag = interaction.user.tag;
+
+    const channel = await interaction.client.channels.fetch(application.channelId).catch(() => null);
+    const message = await channel?.messages.fetch(application.messageId).catch(() => null);
+
+    if (message) {
+      await message.edit({
+        embeds: [buildSubmissionEmbed(application)],
+        components: [],
+      });
+    }
+
+    const applicant = await interaction.client.users.fetch(application.userId).catch(() => null);
+    if (applicant) {
+      await applicant
+        .send({
+          content:
+            `Your **Supervisor Exam** has been **denied**.\n\n` +
+            `**Reason:** ${denyReason}`,
+        })
+        .catch(() => {});
+    }
+
+    await interaction.editReply(`Exam denied. **${application.userTag}** was notified via DM.`);
     return true;
   }
 

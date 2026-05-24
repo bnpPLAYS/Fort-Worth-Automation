@@ -11,7 +11,7 @@ const {
 } = require("discord.js");
 const { getCooldownEnd, isOnCooldown, setCooldown } = require("./cooldowns");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
-const { EMBED_COLOR } = require("./constants");
+const { EMBED_COLOR, STAFF_PING_ROLE_ID } = require("./constants");
 
 const PANEL_COMMAND = "-panelfastpass";
 const BUTTON_CUSTOM_ID = "fastpass_apply";
@@ -428,8 +428,10 @@ async function handleInteraction(interaction) {
     let submissionMessage;
     try {
       submissionMessage = await submissionsChannel.send({
+        content: `<@&${STAFF_PING_ROLE_ID}>`,
         embeds: [buildSubmissionEmbed(application)],
         components: [buildReviewButtons(appId)],
+        allowedMentions: { roles: [STAFF_PING_ROLE_ID] },
       });
     } catch (sendError) {
       applications.delete(appId);

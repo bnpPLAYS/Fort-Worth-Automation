@@ -13,7 +13,7 @@ const {
 } = require("discord.js");
 const path = require("path");
 const { buildPanelEmbed, buildPanelButton } = require("./fastpass");
-const { getTicket, saveTicket, deleteTicket, findOpenTicketByOpener } = require("./tickets-store");
+const { getTicket, saveTicket, deleteTicket, resolveOpenTicket } = require("./tickets-store");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { EMBED_COLOR } = require("./constants");
 const { closeTicket } = require("./transcripts");
@@ -254,7 +254,7 @@ function truncateField(value) {
 async function createReportTicket(interaction, reportedUser, whatHappened) {
   const guild = interaction.guild;
   const opener = interaction.user;
-  const existing = findOpenTicketByOpener(opener.id, "report");
+  const existing = await resolveOpenTicket(guild, opener.id, "report");
 
   if (existing) {
     await interaction.editReply(
@@ -301,7 +301,7 @@ async function createReportTicket(interaction, reportedUser, whatHappened) {
 async function createOtherTicket(interaction) {
   const guild = interaction.guild;
   const opener = interaction.member;
-  const existing = findOpenTicketByOpener(opener.id, "other");
+  const existing = await resolveOpenTicket(guild, opener.id, "other");
 
   if (existing) {
     await interaction.editReply(

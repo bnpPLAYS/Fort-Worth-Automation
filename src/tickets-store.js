@@ -49,9 +49,25 @@ function findOpenTicketByOpener(userId, type) {
   );
 }
 
+async function resolveOpenTicket(guild, userId, type) {
+  const existing = findOpenTicketByOpener(userId, type);
+  if (!existing) return null;
+
+  const [channelId, ticket] = existing;
+  const channel = await guild.channels.fetch(channelId).catch(() => null);
+
+  if (!channel) {
+    deleteTicket(channelId);
+    return null;
+  }
+
+  return [channelId, ticket];
+}
+
 module.exports = {
   getTicket,
   saveTicket,
   deleteTicket,
   findOpenTicketByOpener,
+  resolveOpenTicket,
 };

@@ -8,7 +8,12 @@ const {
   TextInputBuilder,
   TextInputStyle,
 } = require("discord.js");
-const { EMBED_COLOR } = require("./constants");
+const {
+  EMBED_COLOR,
+  STAFF_PING_ROLE_ID,
+  SUPERVISOR_EXAM_ELIGIBILITY_ROLE_ID,
+  SUPERVISOR_APPROVED_ROLE_IDS,
+} = require("./constants");
 
 const TYPE_SUPERVISOR_EXAM_ID = "support_type_supervisor_exam";
 const SUPERVISOR_EXAM_BEGIN_ID = "supervisor_exam_begin";
@@ -17,8 +22,7 @@ const EXAM_APPROVE_PREFIX = "supervisor_exam_approve:";
 const EXAM_DENY_PREFIX = "supervisor_exam_deny:";
 const EXAM_DENY_MODAL_PREFIX = "supervisor_exam_deny_modal:";
 
-const REQUIRED_ROLE_ID = "1501804405366718534";
-const APPROVED_ROLE_ID = "1501804405366718534";
+const REQUIRED_ROLE_ID = SUPERVISOR_EXAM_ELIGIBILITY_ROLE_ID;
 const SUBMISSION_CHANNEL_ID = "1507976263141163008";
 const MIN_WORDS = 20;
 
@@ -302,8 +306,10 @@ async function handleSupervisorExamInteraction(interaction) {
 
     try {
       const submissionMessage = await submissionsChannel.send({
+        content: `<@&${STAFF_PING_ROLE_ID}>`,
         embeds: [buildSubmissionEmbed(application)],
         components: [buildReviewButtons(appId)],
+        allowedMentions: { roles: [STAFF_PING_ROLE_ID] },
       });
 
       application.messageId = submissionMessage.id;
@@ -346,8 +352,14 @@ async function handleSupervisorExamInteraction(interaction) {
     const member = await guild?.members.fetch(application.userId).catch(() => null);
 
     if (member && guild) {
-      await member.roles.add(APPROVED_ROLE_ID).catch((error) => {
-        console.error("Failed to assign supervisor role:", error);
+      if (member.roles.cache.has(REQUIRED_ROLE_ID)) {
+        await member.roles.remove(REQUIRED_ROLE_ID).catch((error) => {
+          console.error("Failed to remove eligibility role:", error);
+        });
+      }
+
+      await member.roles.add(SUPERVISOR_APPROVED_ROLE_IDS).catch((error) => {
+        console.error("Failed to assign supervisor roles:", error);
       });
     }
 
@@ -370,12 +382,12 @@ async function handleSupervisorExamInteraction(interaction) {
         .send({
           content:
             "Congratulations! Your **Supervisor Exam** has been **approved**.\n\n" +
-            "You have been granted the supervisor role. Welcome to the team.",
+            "Your roles have been updated. Welcome to the supervisor team.",
         })
         .catch(() => {});
     }
 
-    await interaction.editReply(`Exam approved. **${application.userTag}** was given the supervisor role.`);
+    await interaction.editReply(`Exam approved. **${application.userTag}** was updated with supervisor roles.`);
     return true;
   }
 

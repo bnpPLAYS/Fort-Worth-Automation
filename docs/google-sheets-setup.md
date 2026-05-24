@@ -86,6 +86,18 @@ function onEdit(e) {
 
 Add trigger: **Extensions → Apps Script → Triggers → onEdit**
 
+## Test connection in Discord
+
+Staff can run:
+
+```
+/rostercheck
+```
+
+Optional: `/rostercheck rank:Lance Corporal` to see if that rank has an open callsign slot.
+
+The reply is only visible to you (ephemeral). Requires **Manage Server** or the staff ping role.
+
 ## Install
 
 ```bash

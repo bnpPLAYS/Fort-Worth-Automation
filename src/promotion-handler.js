@@ -1,6 +1,6 @@
 const { EmbedBuilder } = require("discord.js");
 const { EMBED_COLOR } = require("./constants");
-const { isSheetsConfigured } = require("./google-sheets/client");
+const { isSheetsConfigured, getSheetsConfigHelpMessage } = require("./google-sheets/client");
 const {
   PROMOTION_CHANNEL_ID,
   parsePromotionMessage,
@@ -19,9 +19,7 @@ async function handlePromotionMessage(message) {
   markProcessed(`promotion:${message.id}`);
 
   if (!isSheetsConfigured()) {
-    await message.reply(
-      "Google Sheets is not configured on this bot yet. An admin must add the service account credentials (see `docs/google-sheets-setup.md`).",
-    );
+    await message.reply(getSheetsConfigHelpMessage());
     return true;
   }
 

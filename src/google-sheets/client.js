@@ -1,3 +1,5 @@
+const fs = require("fs");
+const path = require("path");
 const { google } = require("googleapis");
 
 let sheetsClient = null;
@@ -14,8 +16,38 @@ function getCredentialsPath() {
   return process.env.GOOGLE_SERVICE_ACCOUNT_PATH || "./credentials/google-service-account.json";
 }
 
+function getSheetsConfigIssues() {
+  const issues = [];
+
+  if (!getSpreadsheetId()) {
+    issues.push("set **GOOGLE_SHEETS_SPREADSHEET_ID** in `.env` (from your sheet URL)");
+  }
+
+  const credentialsPath = path.resolve(getCredentialsPath());
+  if (!fs.existsSync(credentialsPath)) {
+    issues.push(
+      `place the service account JSON at \`${getCredentialsPath()}\` on the machine running the bot`,
+    );
+  }
+
+  return issues;
+}
+
 function isSheetsConfigured() {
-  return Boolean(getSpreadsheetId() && getCredentialsPath());
+  return getSheetsConfigIssues().length === 0;
+}
+
+function getSheetsConfigHelpMessage() {
+  const issues = getSheetsConfigIssues();
+  if (issues.length === 0) return null;
+
+  return [
+    "Google Sheets is not fully configured on this bot yet:",
+    ...issues.map((issue) => `• ${issue}`),
+    "",
+    "Also share the roster sheet with **discord-roster-bot@fort-worth-police-497316.iam.gserviceaccount.com** as Editor, then restart the bot.",
+    "See `docs/google-sheets-setup.md` for details.",
+  ].join("\n");
 }
 
 function findColumnIndex(header, aliases) {
@@ -118,7 +150,12 @@ async function batchUpdateCells(updates) {
 
 module.exports = {
   isSheetsConfigured,
+  getSheetsConfigHelpMessage,
+  getSheetsConfigIssues,
+  getSpreadsheetId,
+  getRosterSheetName,
+  getCredentialsPath,
+  getSheetsClient,
   getRosterRows,
   batchUpdateCells,
-  getRosterSheetName,
 };

@@ -15,6 +15,7 @@ const {
   handleRideAlongMessage,
 } = require("./cadet");
 const { handlePromotionMessage } = require("./promotion-handler");
+const { handleRosterCheckCommand } = require("./roster-check");
 const {
   handleSupportPanelCommand,
   handleStaffPanelCommand,
@@ -51,6 +52,15 @@ const commands = [
   new SlashCommandBuilder()
     .setName("staffpanel")
     .setDescription("Open the staff ticket management panel in this ticket channel"),
+  new SlashCommandBuilder()
+    .setName("rostercheck")
+    .setDescription("Test Google Sheets roster connection and configuration")
+    .addStringOption((option) =>
+      option
+        .setName("rank")
+        .setDescription("Optional: check if this rank has an open callsign slot")
+        .setRequired(false),
+    ),
 ].map((command) => command.toJSON());
 
 async function registerCommands() {
@@ -100,6 +110,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
 
     handled = await handleStaffPanelCommand(interaction);
+    if (handled) return;
+
+    handled = await handleRosterCheckCommand(interaction);
     if (handled) return;
 
     if (interaction.isChatInputCommand() && interaction.commandName === "ping") {

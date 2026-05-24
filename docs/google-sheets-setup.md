@@ -22,6 +22,8 @@ Row 1 must be the header row:
 |---|---|---|---|-----|
 | **RANK** | **RP NAME** | **CALLSIGN** | **ROLLS** | Patrol Cert, IA, SWAT, R/A Cert |
 
+Row 1 can be a title (e.g. **FORT WORTH EMPLOYEE ROSTER**). The bot scans the first 30 rows to find the header row with **RANK | RP NAME | CALLSIGN | ROLLS**.
+
 - **Blue section rows** (e.g. `OFFICE OF THE CHIEF`, `COMMAND STAFF`) are ignored automatically
 - Only rows with a **4-digit callsign** in column C are treated as roster slots
 - **Open slot** = rank + callsign filled, **RP NAME** (column B) is empty

@@ -72,6 +72,30 @@ function columnIndexToLetter(index) {
   return String.fromCharCode(65 + index);
 }
 
+function parseHeaderRow(row) {
+  const header = (row ?? []).map((cell) => String(cell).trim().toUpperCase());
+  const rankIndex = findColumnIndex(header, ["RANK"]);
+  const nameIndex = findColumnIndex(header, ["RP NAME", "RPNAME", "ROLEPLAY NAME", "NAME"]);
+  const callsignIndex = findColumnIndex(header, ["CALLSIGN", "CALL SIGN"]);
+  const rollsIndex = findColumnIndex(header, ["ROLLS", "ROLES", "ROLE"]);
+
+  if (rankIndex === -1 || callsignIndex === -1 || nameIndex === -1) {
+    return null;
+  }
+
+  return { header, rankIndex, nameIndex, callsignIndex, rollsIndex };
+}
+
+function findHeaderRowIndex(rows, maxScan = 30) {
+  for (let rowIndex = 0; rowIndex < Math.min(rows.length, maxScan); rowIndex += 1) {
+    if (parseHeaderRow(rows[rowIndex])) {
+      return rowIndex;
+    }
+  }
+
+  return -1;
+}
+
 function isDataRow(rank, callsign) {
   return /^\d{3,5}$/.test(callsign.replace(/\s/g, ""));
 }
@@ -103,22 +127,18 @@ async function getRosterRows() {
     throw new Error(`Sheet "${sheetName}" is empty or missing.`);
   }
 
-  const header = rows[0].map((cell) => String(cell).trim().toUpperCase());
-  const rankIndex = findColumnIndex(header, ["RANK"]);
-  const nameIndex = findColumnIndex(header, ["RP NAME", "RPNAME", "ROLEPLAY NAME", "NAME"]);
-  const callsignIndex = findColumnIndex(header, ["CALLSIGN", "CALL SIGN"]);
-  const rollsIndex = findColumnIndex(header, ["ROLLS", "ROLES", "ROLE"]);
-
-  if (rankIndex === -1 || callsignIndex === -1 || nameIndex === -1) {
+  const headerRowIndex = findHeaderRowIndex(rows);
+  if (headerRowIndex === -1) {
     throw new Error(
-      'Roster sheet must have header row with columns: RANK | RP NAME | CALLSIGN | ROLLS (and optional cert columns)',
+      'Could not find a header row with columns RANK | RP NAME | CALLSIGN within the first 30 rows. Add that header row or move it higher in the sheet.',
     );
   }
 
+  const { rankIndex, nameIndex, callsignIndex, rollsIndex } = parseHeaderRow(rows[headerRowIndex]);
   const nameColumnLetter = columnIndexToLetter(nameIndex);
   const entries = [];
 
-  for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+  for (let rowIndex = headerRowIndex + 1; rowIndex < rows.length; rowIndex += 1) {
     const row = rows[rowIndex] ?? [];
     const rank = String(row[rankIndex] ?? "").trim();
     const name = String(row[nameIndex] ?? "").trim();
@@ -139,7 +159,7 @@ async function getRosterRows() {
     });
   }
 
-  return { sheetName, entries, nameColumnLetter };
+  return { sheetName, entries, nameColumnLetter, headerRowNumber: headerRowIndex + 1 };
 }
 
 async function batchUpdateCells(updates) {

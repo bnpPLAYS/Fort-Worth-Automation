@@ -66,9 +66,11 @@ async function main() {
       process.exit(1);
     }
 
-    const range = `${sheetName}!A1:D1`;
-    const header = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-    console.log("\nHeader row:", (header.data.values ?? [[]])[0].join(" | "));
+    const { getRosterRows } = require("../src/google-sheets/client");
+    const { entries, headerRowNumber } = await getRosterRows();
+
+    console.log("\nHeader row found on sheet row:", headerRowNumber);
+    console.log("Roster slots:", entries.length);
     console.log("\nAll checks passed.");
   } catch (error) {
     const details = getGoogleErrorDetails(error);

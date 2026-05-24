@@ -183,10 +183,11 @@ async function runRosterDiagnostics({ rankToCheck } = {}) {
   }
 
   try {
-    const { entries } = await getRosterRows();
+    const { entries, headerRowNumber } = await getRosterRows();
     const filled = entries.filter((entry) => entry.name.length > 0).length;
     const open = entries.filter((entry) => entry.name.length === 0).length;
 
+    lines.push(`✅ Found header row on sheet row **${headerRowNumber}**`);
     lines.push(`✅ Read roster: **${filled}** filled slot(s), **${open}** open slot(s)`);
 
     if (rankToCheck) {

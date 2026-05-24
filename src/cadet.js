@@ -5,14 +5,24 @@ const {
   EmbedBuilder,
   PermissionFlagsBits,
 } = require("discord.js");
-const { EMBED_COLOR } = require("./constants");
+const { EMBED_COLOR, RA_STAFF_ROLE_IDS, PROBATIONARY_OFFICER_ROLE_ID, GOOGLE_PROBATIONARY_RANK_NAME, CADET_ENROLL_COOLDOWN_MS } = require("./constants");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { isOnCooldown, setCooldown, getCooldownRemainingMs } = require("./cooldowns");
 const { getRoleplayNameFromMember, updateMemberCallsign } = require("./discord-callsign");
-const { isSheetsConfigured, assignCadetCallsign } = require("./google-sheets/roster-assign");
+const {
+  isSheetsConfigured,
+  assignCadetCallsign,
+  assignMemberToOpenRank,
+  clearRosterForName,
+} = require("./google-sheets/roster-assign");
 
 const RA_COOLDOWN_MS = 15 * 60 * 1000;
 const RA_COOLDOWN_TYPE = "ride-along";
+const CADET_ENROLL_COOLDOWN_TYPE = "cadet-enroll";
+
+const RA_CLAIM_PREFIX = "ra_claim:";
+const RA_PASS_PREFIX = "ra_pass:";
+const RA_FAIL_PREFIX = "ra_fail:";
 
 const CADET_PANEL_COMMAND = "-becomecadetpanel";
 const CADET_ENROLL_BUTTON_ID = "cadet_enroll";
@@ -25,7 +35,87 @@ const CADET_ROLE_IDS = [
 
 const RA_REQUEST_CHANNEL_ID = "1501730869961031770";
 const RA_NOTIFICATION_CHANNEL_ID = "1485030495841681408";
-const RA_PING_ROLE_IDS = ["1484950653045440532", "1484950025472704643"];
+const RA_PING_ROLE_IDS = RA_STAFF_ROLE_IDS;
+
+const rideAlongRequests = new Map();
+
+function canManageRideAlong(member) {
+  return RA_STAFF_ROLE_IDS.some((roleId) => member?.roles?.cache?.has(roleId));
+}
+
+function formatCooldownDuration(remainingMs) {
+  const totalMinutes = Math.ceil(remainingMs / 60000);
+  if (totalMinutes >= 1440) {
+    const days = Math.ceil(totalMinutes / 1440);
+    return days === 1 ? "1 day" : `${days} days`;
+  }
+  if (totalMinutes >= 60) {
+    const hours = Math.ceil(totalMinutes / 60);
+    return hours === 1 ? "1 hour" : `${hours} hours`;
+  }
+  return totalMinutes <= 1 ? "1 minute" : `${totalMinutes} minutes`;
+}
+
+function getRideAlongRequest(requestId) {
+  return rideAlongRequests.get(requestId) ?? null;
+}
+
+function buildRideAlongEmbed(request) {
+  const embed = new EmbedBuilder()
+    .setColor(EMBED_COLOR)
+    .setTitle("Ride-Along Request")
+    .setDescription(`Submitted by <@${request.applicantId}> in <#${RA_REQUEST_CHANNEL_ID}>`)
+    .addFields(
+      { name: "Roblox User", value: request.robloxUser, inline: true },
+      { name: "Discord User", value: request.discordUser, inline: true },
+      { name: "Available For", value: request.availableFor, inline: false },
+    )
+    .setURL(request.requestUrl);
+
+  if (request.claimedById) {
+    embed.addFields({
+      name: "Claimed By",
+      value: `<@${request.claimedById}>`,
+      inline: true,
+    });
+  }
+
+  if (request.status === "passed") {
+    embed.setTitle("Ride-Along — Passed");
+    embed.addFields({ name: "Result", value: `Passed by <@${request.resolvedById}>`, inline: false });
+  } else if (request.status === "failed") {
+    embed.setTitle("Ride-Along — Failed");
+    embed.addFields({ name: "Result", value: `Failed by <@${request.resolvedById}>`, inline: false });
+  }
+
+  return embed;
+}
+
+function buildRideAlongButtons(request) {
+  if (request.status === "passed" || request.status === "failed") {
+    return [];
+  }
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${RA_CLAIM_PREFIX}${request.requestId}`)
+      .setLabel(request.claimedById ? "Claimed" : "Claim")
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(Boolean(request.claimedById)),
+    new ButtonBuilder()
+      .setCustomId(`${RA_PASS_PREFIX}${request.requestId}`)
+      .setLabel("Pass")
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(!request.claimedById),
+    new ButtonBuilder()
+      .setCustomId(`${RA_FAIL_PREFIX}${request.requestId}`)
+      .setLabel("Fail")
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(!request.claimedById),
+  );
+
+  return [row];
+}
 
 function buildCadetPanelEmbed() {
   return new EmbedBuilder()
@@ -86,6 +176,14 @@ async function handleCadetInteraction(interaction) {
   }
 
   await interaction.deferReply({ ephemeral: true });
+
+  if (isOnCooldown(member.id, CADET_ENROLL_COOLDOWN_TYPE)) {
+    const remainingMs = getCooldownRemainingMs(member.id, CADET_ENROLL_COOLDOWN_TYPE);
+    await interaction.editReply(
+      `You cannot become a cadet again yet. Try again in **${formatCooldownDuration(remainingMs)}**.`,
+    );
+    return true;
+  }
 
   const rolesToAdd = CADET_ROLE_IDS.filter((roleId) => !member.roles.cache.has(roleId));
 
@@ -199,25 +297,200 @@ async function handleRideAlongMessage(message) {
   }
 
   const rolePings = RA_PING_ROLE_IDS.map((id) => `<@&${id}>`).join(" ");
-  const embed = new EmbedBuilder()
-    .setColor(EMBED_COLOR)
-    .setTitle("Ride-Along Request")
-    .setDescription(`Submitted by ${message.author} in <#${RA_REQUEST_CHANNEL_ID}>`)
-    .addFields(
-      { name: "Roblox User", value: parsed.robloxUser, inline: true },
-      { name: "Discord User", value: parsed.discordUser, inline: true },
-      { name: "Available For", value: parsed.availableFor, inline: false },
-    )
-    .setURL(message.url);
+  const requestId = message.id;
 
-  await notificationChannel.send({
+  const request = {
+    requestId,
+    applicantId: message.author.id,
+    applicantTag: message.author.tag,
+    guildId: message.guild.id,
+    requestUrl: message.url,
+    robloxUser: parsed.robloxUser,
+    discordUser: parsed.discordUser,
+    availableFor: parsed.availableFor,
+    status: "pending",
+    claimedById: null,
+    resolvedById: null,
+  };
+
+  rideAlongRequests.set(requestId, request);
+
+  const notificationMessage = await notificationChannel.send({
     content: `${rolePings}\n\nA **ride-along request** is pending.\n[Jump to request](${message.url})`,
-    embeds: [embed],
+    embeds: [buildRideAlongEmbed(request)],
+    components: buildRideAlongButtons(request),
     allowedMentions: { roles: RA_PING_ROLE_IDS },
   });
 
+  request.notificationMessageId = notificationMessage.id;
+  request.notificationChannelId = notificationMessage.channel.id;
+
   setCooldown(message.author.id, RA_COOLDOWN_MS, RA_COOLDOWN_TYPE);
 
+  return true;
+}
+
+async function updateRideAlongNotification(client, request) {
+  if (!request.notificationChannelId || !request.notificationMessageId) return;
+
+  const channel = await client.channels.fetch(request.notificationChannelId).catch(() => null);
+  const notificationMessage = await channel?.messages
+    .fetch(request.notificationMessageId)
+    .catch(() => null);
+
+  if (!notificationMessage) return;
+
+  await notificationMessage.edit({
+    embeds: [buildRideAlongEmbed(request)],
+    components: buildRideAlongButtons(request),
+  });
+}
+
+async function handleRideAlongInteraction(interaction) {
+  if (!interaction.isButton()) return false;
+
+  let action = null;
+  let requestId = null;
+
+  if (interaction.customId.startsWith(RA_CLAIM_PREFIX)) {
+    action = "claim";
+    requestId = interaction.customId.slice(RA_CLAIM_PREFIX.length);
+  } else if (interaction.customId.startsWith(RA_PASS_PREFIX)) {
+    action = "pass";
+    requestId = interaction.customId.slice(RA_PASS_PREFIX.length);
+  } else if (interaction.customId.startsWith(RA_FAIL_PREFIX)) {
+    action = "fail";
+    requestId = interaction.customId.slice(RA_FAIL_PREFIX.length);
+  } else {
+    return false;
+  }
+
+  if (!canManageRideAlong(interaction.member)) {
+    await interaction.reply({
+      content: "You do not have permission to manage ride-along requests.",
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  const request = getRideAlongRequest(requestId);
+  if (!request) {
+    await interaction.reply({
+      content: "This ride-along request is no longer active.",
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  if (request.status === "passed" || request.status === "failed") {
+    await interaction.reply({ content: "This ride-along has already been resolved.", ephemeral: true });
+    return true;
+  }
+
+  if (action === "claim") {
+    if (request.claimedById) {
+      await interaction.reply({
+        content: `Already claimed by <@${request.claimedById}>.`,
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    request.claimedById = interaction.user.id;
+    await updateRideAlongNotification(interaction.client, request);
+    await interaction.reply({ content: "You claimed this ride-along.", ephemeral: true });
+    return true;
+  }
+
+  if (request.claimedById !== interaction.user.id) {
+    await interaction.reply({
+      content: "Only the staff member who claimed this ride-along can pass or fail it.",
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const guild = await interaction.client.guilds.fetch(request.guildId).catch(() => null);
+  const applicant = await guild?.members.fetch(request.applicantId).catch(() => null);
+
+  if (!applicant) {
+    await interaction.editReply("Could not find the applicant in this server.");
+    return true;
+  }
+
+  if (action === "pass") {
+    await applicant.roles.remove(CADET_ROLE_IDS).catch((error) => {
+      console.error("Failed to remove cadet roles on pass:", error);
+    });
+    await applicant.roles.add(PROBATIONARY_OFFICER_ROLE_ID).catch((error) => {
+      console.error("Failed to assign probationary officer role:", error);
+    });
+
+    const roleplayName = getRoleplayNameFromMember(applicant);
+    const probationaryRank =
+      process.env.GOOGLE_PROBATIONARY_RANK_NAME || GOOGLE_PROBATIONARY_RANK_NAME;
+    let rosterNote = "";
+
+    if (isSheetsConfigured()) {
+      try {
+        const rosterResult = await assignMemberToOpenRank(roleplayName, probationaryRank);
+        const nicknameResult = await updateMemberCallsign(
+          applicant,
+          rosterResult.newCallsign,
+          roleplayName,
+        );
+        rosterNote = ` Roster: **${rosterResult.newCallsign}** (${rosterResult.newRank}).`;
+        if (!nicknameResult.ok) {
+          rosterNote += ` Nickname not updated: ${nicknameResult.reason}`;
+        }
+      } catch (error) {
+        console.error("Ride-along pass roster assignment failed:", error);
+        rosterNote = ` Roster update failed: ${error.message}`;
+      }
+    }
+
+    request.status = "passed";
+    request.resolvedById = interaction.user.id;
+    await updateRideAlongNotification(interaction.client, request);
+
+    await applicant.user
+      .send(
+        "Your ride-along has been marked **Passed**.\n\n" +
+          "You have been promoted to **Probationary Officer**. Welcome to the department.",
+      )
+      .catch(() => null);
+
+    await interaction.editReply(`Marked **Passed** for ${applicant}.${rosterNote}`);
+    return true;
+  }
+
+  await applicant.roles.remove(CADET_ROLE_IDS).catch((error) => {
+    console.error("Failed to remove cadet roles on fail:", error);
+  });
+  setCooldown(applicant.id, CADET_ENROLL_COOLDOWN_MS, CADET_ENROLL_COOLDOWN_TYPE);
+
+  if (isSheetsConfigured()) {
+    try {
+      await clearRosterForName(getRoleplayNameFromMember(applicant));
+    } catch (error) {
+      console.error("Ride-along fail roster clear failed:", error);
+    }
+  }
+
+  request.status = "failed";
+  request.resolvedById = interaction.user.id;
+  await updateRideAlongNotification(interaction.client, request);
+
+  await applicant.user
+    .send(
+      "Your ride-along has been marked **Failed**.\n\n" +
+        "Your cadet roles were removed. You may try again in **3 days** using **Become Cadet**.",
+    )
+    .catch(() => null);
+
+  await interaction.editReply(`Marked **Failed** for ${applicant}. They cannot re-enroll as cadet for 3 days.`);
   return true;
 }
 
@@ -225,4 +498,5 @@ module.exports = {
   handleCadetPanelCommand,
   handleCadetInteraction,
   handleRideAlongMessage,
+  handleRideAlongInteraction,
 };

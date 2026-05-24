@@ -13,6 +13,7 @@ const {
   handleCadetPanelCommand,
   handleCadetInteraction,
   handleRideAlongMessage,
+  handleRideAlongInteraction,
 } = require("./cadet");
 const { handlePromotionMessage } = require("./promotion-handler");
 const { handleRosterCheckCommand } = require("./roster-check");
@@ -104,6 +105,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
 
     handled = await handleCadetInteraction(interaction);
+    if (handled) return;
+
+    handled = await handleRideAlongInteraction(interaction);
     if (handled) return;
 
     handled = await handleSupportInteraction(interaction);

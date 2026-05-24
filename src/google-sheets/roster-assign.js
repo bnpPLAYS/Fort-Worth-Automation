@@ -110,9 +110,17 @@ async function assignCadetCallsign(roleplayName) {
   };
 }
 
+async function clearRosterForName(roleplayName) {
+  const { entries, sheetName } = await getRosterRows();
+  const existingEntries = findEntriesForName(entries, roleplayName);
+  await clearNameFromEntries(sheetName, existingEntries);
+  return existingEntries.length;
+}
+
 module.exports = {
   isSheetsConfigured,
   findOpenSlotInRank,
   assignMemberToOpenRank,
   assignCadetCallsign,
+  clearRosterForName,
 };

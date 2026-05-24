@@ -69,13 +69,21 @@ Add a **CADET** section on the roster tab with rows like:
 
 When someone clicks **Become Cadet**, the bot assigns the next open `C-N` slot and tells them **not to use it in-game**.
 
+### Ride-along staff buttons
+
+When a valid ride-along request is posted, staff with roles `1484950025472704643` or `1484950653045440532` see **Claim**, **Pass**, and **Fail** in the employee notification channel.
+
+1. **Claim** — take charge of the ride-along (required before Pass/Fail)
+2. **Pass** — removes cadet roles, assigns **Probationary Officer** Discord role, assigns an open **Probationary Officer** roster slot + callsign
+3. **Fail** — removes cadet roles, clears their cadet roster row, **3-day cooldown** before they can click **Become Cadet** again
+
 ### Automatic roster updates
 
 | Event | Bot action |
 |-------|------------|
 | **Become Cadet** | Assigns next open `C-1` … `C-100` cadet callsign |
 | **Fast Pass accepted** | Assigns open slot for the selected rank (e.g. Probationary Officer) + department callsign |
-| **Supervisor exam approved** | Moves member to open **Lieutenant** slot (configurable via `GOOGLE_SUPERVISOR_RANK_NAME`) |
+| **Supervisor exam approved** | Moves member from **Lance Corporal** to open **Corporal** slot (`GOOGLE_SUPERVISOR_RANK_NAME`) |
 | **Promotion channel message** | Manual rank move (existing flow) |
 
 Rank names on the sheet must match Discord role names loosely (e.g. `Probationary Officer`, `LIEUTENANT`).

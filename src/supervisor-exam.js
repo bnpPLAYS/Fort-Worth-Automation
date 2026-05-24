@@ -1,5 +1,7 @@
 const {
   ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   EmbedBuilder,
   ModalBuilder,
   TextInputBuilder,
@@ -8,6 +10,7 @@ const {
 const { EMBED_COLOR } = require("./constants");
 
 const TYPE_SUPERVISOR_EXAM_ID = "support_type_supervisor_exam";
+const SUPERVISOR_EXAM_BEGIN_ID = "supervisor_exam_begin";
 const SUPERVISOR_EXAM_MODAL_ID = "supervisor_exam_modal";
 
 const REQUIRED_ROLE_ID = "1501804405366718534";
@@ -17,37 +20,32 @@ const MIN_WORDS = 20;
 const EXAM_FIELDS = [
   {
     id: "ready",
-    label: "Ready for supervisor role?",
+    number: 1,
     question: "Why do you believe you are ready for a supervisor position?",
-    placeholder: "Write at least 20 words explaining your readiness...",
   },
   {
     id: "officer_arguing",
-    label: "Officer arguing with civilians?",
+    number: 2,
     question:
       "An officer under your supervision begins arguing with civilians. What would you do?",
-    placeholder: "Write at least 20 words describing your response...",
   },
   {
     id: "talking_over",
-    label: "Officers talking over each other?",
+    number: 3,
     question:
       "You arrive on scene, and multiple officers are talking over each other. How do you regain control?",
-    placeholder: "Write at least 20 words explaining how you would handle this...",
   },
   {
     id: "driver_exits",
-    label: "Driver exits during traffic stop?",
+    number: 4,
     question:
       "During a traffic stop, the driver suddenly exits the vehicle and begins walking toward your officers. What would you do?",
-    placeholder: "Write at least 20 words describing your actions...",
   },
   {
     id: "stolen_vehicle",
-    label: "Vehicle reported stolen on stop?",
+    number: 5,
     question:
       "During the stop, dispatch advises that the vehicle was reported stolen. How would you coordinate the situation?",
-    placeholder: "Write at least 20 words explaining your coordination plan...",
   },
 ];
 
@@ -75,6 +73,29 @@ function truncateField(value) {
   return value.length > 1024 ? value.slice(0, 1021) + "..." : value;
 }
 
+function buildExamQuestionsEmbed() {
+  const description = EXAM_FIELDS.map(
+    (field) => `**${field.number}.** ${field.question}`,
+  ).join("\n\n");
+
+  return new EmbedBuilder()
+    .setColor(EMBED_COLOR)
+    .setTitle("Supervisor Exam")
+    .setDescription(
+      `${description}\n\n` +
+        `Each answer must be at least **${MIN_WORDS} words**. Click **Begin Exam** below when you are ready.`,
+    );
+}
+
+function buildBeginExamButton() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(SUPERVISOR_EXAM_BEGIN_ID)
+      .setLabel("Begin Exam")
+      .setStyle(ButtonStyle.Danger),
+  );
+}
+
 function buildSupervisorExamModal() {
   const modal = new ModalBuilder()
     .setCustomId(SUPERVISOR_EXAM_MODAL_ID)
@@ -85,8 +106,8 @@ function buildSupervisorExamModal() {
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId(field.id)
-          .setLabel(field.label)
-          .setPlaceholder(field.placeholder)
+          .setLabel(`Question ${field.number}`)
+          .setPlaceholder(`Answer question ${field.number} (minimum ${MIN_WORDS} words)`)
           .setStyle(TextInputStyle.Paragraph)
           .setRequired(true)
           .setMaxLength(4000),
@@ -111,7 +132,7 @@ function buildSubmissionEmbed(user, answers, durationMs) {
 
   for (const field of EXAM_FIELDS) {
     embed.addFields({
-      name: field.question,
+      name: `${field.number}. ${field.question}`,
       value: truncateField(answers[field.id]),
     });
   }
@@ -121,6 +142,24 @@ function buildSubmissionEmbed(user, answers, durationMs) {
 
 async function handleSupervisorExamInteraction(interaction) {
   if (interaction.isButton() && interaction.customId === TYPE_SUPERVISOR_EXAM_ID) {
+    const member = interaction.member;
+    if (!member?.roles?.cache?.has(REQUIRED_ROLE_ID)) {
+      await interaction.reply({
+        content: "You do not have the required role to request a supervisor exam.",
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    await interaction.reply({
+      embeds: [buildExamQuestionsEmbed()],
+      components: [buildBeginExamButton()],
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  if (interaction.isButton() && interaction.customId === SUPERVISOR_EXAM_BEGIN_ID) {
     const member = interaction.member;
     if (!member?.roles?.cache?.has(REQUIRED_ROLE_ID)) {
       await interaction.reply({

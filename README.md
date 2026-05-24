@@ -32,7 +32,7 @@ Discord bot built with [discord.js](https://discord.js.org/) v14.
 1. In the [Developer Portal](https://discord.com/developers/applications) → **Bot**, enable **Message Content Intent** (required for `-panelfastpass`).
 2. Restart the bot: `npm start`
 3. In a channel, send `-panelfastpass` (requires **Manage Server** permission).
-4. Users click the grey **Fast Pass** button to begin a two-part application. Part 2 requires at least 50 words per answer. Staff can Accept (assign rank) or Deny (4-day cooldown) from the submissions channel.
+4. Users click the grey **Fast Pass** button to begin a two-part application. Part 2 requires at least 20 words per answer. Staff can Accept (assign rank) or Deny (4-day cooldown) from the submissions channel.
 
 **Staff review:** Accept/Deny buttons appear on each submission in the submissions channel. Requires **Manage Roles** or **Manage Server**. On accept, assign one of the configured officer ranks. The bot also needs **Server Members Intent** enabled in the Developer Portal for role assignment.
 

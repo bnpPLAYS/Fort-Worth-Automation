@@ -21,7 +21,7 @@ const ACCEPT_PREFIX = "fastpass_accept:";
 const DENY_PREFIX = "fastpass_deny:";
 const RANK_SELECT_PREFIX = "fastpass_rank:";
 
-const MIN_WORDS = 50;
+const MIN_WORDS = 20;
 const GUIDE_CHANNEL_ID = "1484990957299564666";
 
 const STAGE_ONE_FIELDS = [
@@ -44,31 +44,31 @@ const STAGE_TWO_FIELDS = [
     id: "why_choose",
     label: "Why choose you over others?",
     question: "Why should we choose you over other applicants?",
-    placeholder: "Write at least 50 words explaining why you stand out...",
+    placeholder: "Write at least 20 words explaining why you stand out...",
   },
   {
     id: "qualities",
     label: "Qualities for the department?",
     question: "What qualities would you bring to the department?",
-    placeholder: "Write at least 50 words about your strengths and qualities...",
+    placeholder: "Write at least 20 words about your strengths and qualities...",
   },
   {
     id: "traffic_stop",
     label: "Before initiating a traffic stop?",
     question: "What should you do before initiating a traffic stop?",
-    placeholder: "Write at least 50 words on proper traffic stop procedure...",
+    placeholder: "Write at least 20 words on proper traffic stop procedure...",
   },
   {
     id: "use_of_force",
     label: "When is force appropriate?",
     question: "When is it appropriate to use force during a situation?",
-    placeholder: "Write at least 50 words on appropriate use of force...",
+    placeholder: "Write at least 20 words on appropriate use of force...",
   },
   {
     id: "non_compliance",
     label: "If suspect refuses to comply?",
     question: "What should you do if a suspect refuses to comply with orders?",
-    placeholder: "Write at least 50 words on handling non-compliance...",
+    placeholder: "Write at least 20 words on handling non-compliance...",
   },
 ];
 
@@ -135,7 +135,7 @@ function buildPanelEmbed() {
     .setTitle("Fast Pass Application")
     .setDescription(
       "Click **Fast Pass** below to begin your application.\n\n" +
-        "You will complete a two-part form. The second part requires detailed answers of at least 50 words each.",
+        "You will complete a two-part form. The second part requires detailed answers of at least 20 words each.",
     )
     .setFooter({ text: "Fort Worth Automation" });
 }
@@ -293,7 +293,7 @@ async function handleInteraction(interaction) {
     await interaction.reply({
       content:
         "Part 1 submitted! Click the red **Continue** button below to open the final questions.\n\n" +
-        "Each final answer must be at least **50 words**.",
+        "Each final answer must be at least **20 words**.",
       components: [
         new ActionRowBuilder().addComponents(
           new ButtonBuilder()

@@ -10,6 +10,20 @@ const { findMemberForRosterEntry, updateMemberCallsign } = require("./discord-ca
 const { canBypassRankEligibility, validatePromotionRank } = require("./rank-eligibility");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 
+const ROLE_REQUEST_DELETE_MS = 3 * 60 * 1000;
+
+function scheduleRoleRequestCleanup(requestMessage) {
+  requestMessage.react("✅").catch((error) => {
+    console.warn("Could not react to promotion message:", error.message);
+  });
+
+  setTimeout(() => {
+    requestMessage.delete().catch((error) => {
+      console.warn("Could not delete promotion message:", error.message);
+    });
+  }, ROLE_REQUEST_DELETE_MS);
+}
+
 async function handlePromotionMessage(message) {
   if (message.author.bot || !message.guild) return false;
   if (message.channel.id !== PROMOTION_CHANNEL_ID) return false;
@@ -97,6 +111,7 @@ async function handlePromotionMessage(message) {
     }
 
     await processingMessage.edit({ content: null, embeds: [embed] });
+    scheduleRoleRequestCleanup(message);
   } catch (error) {
     console.error("Promotion update failed:", error);
     await processingMessage.edit(`Roster update failed: ${error.message}`);

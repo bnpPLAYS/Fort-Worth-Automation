@@ -29,6 +29,10 @@ After a successful promotion, the bot updates the member's nickname:
 
 The bot needs **Manage Nicknames** and its role must be above the member's highest role.
 
+### Channel cleanup
+
+On a **successful** promotion, the bot reacts with a checkmark on the request message and **deletes that message after 3 minutes**. The bot's reply embed stays in the channel. The bot needs **Add Reactions** and **Manage Messages** in the promotions channel.
+
 ## Your sheet layout
 
 Row 1 must be the header row:

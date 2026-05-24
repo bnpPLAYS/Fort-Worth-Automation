@@ -85,7 +85,7 @@ const pendingSessions = new Map();
 const applications = new Map();
 
 function getSubmissionsChannelId() {
-  return process.env.FASTPASS_SUBMISSIONS_CHANNEL_ID || "1498803252626718833";
+  return process.env.FASTPASS_SUBMISSIONS_CHANNEL_ID || "1484948609546846290";
 }
 
 function countWords(text) {

@@ -9,6 +9,12 @@ const {
   SlashCommandBuilder,
 } = require("discord.js");
 const { handlePanelCommand, handleInteraction, MIN_WORDS } = require("./fastpass");
+const {
+  handleSupportPanelCommand,
+  handleStaffPanelCommand,
+  handleSupportInteraction,
+  handleSupportMessage,
+} = require("./support");
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.CLIENT_ID;
@@ -35,9 +41,10 @@ const client = new Client({
 });
 
 const commands = [
+  new SlashCommandBuilder().setName("ping").setDescription("Replies with Pong!"),
   new SlashCommandBuilder()
-    .setName("ping")
-    .setDescription("Replies with Pong!"),
+    .setName("staffpanel")
+    .setDescription("Open the staff ticket management panel in this ticket channel"),
 ].map((command) => command.toJSON());
 
 async function registerCommands() {
@@ -54,6 +61,8 @@ client.once(Events.ClientReady, (readyClient) => {
 client.on(Events.MessageCreate, async (message) => {
   try {
     await handlePanelCommand(message);
+    await handleSupportPanelCommand(message);
+    await handleSupportMessage(message);
   } catch (error) {
     console.error("Message handler error:", error);
   }
@@ -72,7 +81,13 @@ function isBenignInteractionError(error) {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    const handled = await handleInteraction(interaction);
+    let handled = await handleInteraction(interaction);
+    if (handled) return;
+
+    handled = await handleSupportInteraction(interaction);
+    if (handled) return;
+
+    handled = await handleStaffPanelCommand(interaction);
     if (handled) return;
 
     if (interaction.isChatInputCommand() && interaction.commandName === "ping") {

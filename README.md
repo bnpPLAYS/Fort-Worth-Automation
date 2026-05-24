@@ -36,6 +36,16 @@ Discord bot built with [discord.js](https://discord.js.org/) v14.
 
 **Staff review:** Accept/Deny buttons appear on each submission in the submissions channel. Requires **Manage Roles** or **Manage Server**. On accept, assign one of the configured officer ranks. The bot also needs **Server Members Intent** enabled in the Developer Portal for role assignment.
 
+## Assistance Hub / Support Tickets
+
+1. Send `-supportpanel` (requires **Manage Server**) to post the Assistance Hub with a red **Contact Support** button.
+2. **FastPass** — opens the existing Fast Pass application UI.
+3. **Report** — select a member, describe what happened, opens `{member}-report` in the report category with an Internal Affairs embed. `@here` is pinged after the opener sends their first message (evidence/clips).
+4. **Other** — opens `{username}-support` in the general support category with a welcome embed and `@here` ping.
+5. Staff use `/staffpanel` inside a ticket channel for **Close Ticket** (DMs reason to opener), **Close Request**, or **Ticket Advance** (escalates category and pings staff role).
+
+The bot needs **Manage Channels** permission and its role must be above ticket categories and the staff role.
+
 ## Deploy to VPS
 
 ```bash

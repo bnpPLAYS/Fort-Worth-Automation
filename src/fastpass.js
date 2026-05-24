@@ -638,6 +638,8 @@ async function handleInteraction(interaction) {
 
 module.exports = {
   MIN_WORDS,
+  buildPanelEmbed,
+  buildPanelButton,
   handlePanelCommand,
   handleInteraction,
 };

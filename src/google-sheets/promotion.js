@@ -11,10 +11,24 @@ function normalizeCallsign(value) {
 }
 
 function parsePromotionMessage(content) {
+  const block = content.trim();
+
+  const labeledMatch =
+    block.match(/(?:Roleplay Name|RP Name):\s*(.+?)\s*Current Callsign:\s*(.+?)\s*New Rank:\s*(.+)/is);
+
+  if (labeledMatch) {
+    return {
+      roleplayName: labeledMatch[1].trim(),
+      currentCallsign: normalizeCallsign(labeledMatch[2]),
+      newRank: labeledMatch[3].trim(),
+    };
+  }
+
   const nameMatch =
-    content.match(/Roleplay Name:\s*(.+)/i) || content.match(/RP Name:\s*(.+)/i);
-  const callsignMatch = content.match(/Current Callsign:\s*(.+)/i);
-  const rankMatch = content.match(/New Rank:\s*(.+)/i);
+    block.match(/Roleplay Name:\s*([\s\S]*?)(?=\r?\n\s*Current Callsign:|$)/i) ||
+    block.match(/RP Name:\s*([\s\S]*?)(?=\r?\n\s*Current Callsign:|$)/i);
+  const callsignMatch = block.match(/Current Callsign:\s*([\s\S]*?)(?=\r?\n\s*New Rank:|$)/i);
+  const rankMatch = block.match(/New Rank:\s*([\s\S]*?)$/i);
 
   if (!nameMatch || !callsignMatch || !rankMatch) {
     return null;
@@ -25,6 +39,30 @@ function parsePromotionMessage(content) {
     currentCallsign: normalizeCallsign(callsignMatch[1]),
     newRank: rankMatch[1].trim(),
   };
+}
+
+function buildNotFoundError(entries, roleplayName, currentCallsign) {
+  const normalizedName = normalize(roleplayName);
+  const normalizedCallsign = normalizeCallsign(currentCallsign);
+  const matchesForName = entries.filter(
+    (entry) => entry.name.length > 0 && normalize(entry.name) === normalizedName,
+  );
+
+  if (matchesForName.length === 1) {
+    const entry = matchesForName[0];
+    return [
+      `Could not find **${roleplayName}** at callsign **${currentCallsign}**.`,
+      `That name is on the roster at callsign **${entry.callsign}** (${entry.rank}).`,
+      "Use your **current** callsign from the sheet in the message.",
+    ].join(" ");
+  }
+
+  if (matchesForName.length > 1) {
+    const callsigns = matchesForName.map((entry) => entry.callsign).join(", ");
+    return `Found multiple roster rows for **${roleplayName}** (callsigns: ${callsigns}). Contact staff.`;
+  }
+
+  return `Could not find **${roleplayName}** at callsign **${currentCallsign}**. Check the RP NAME and CALLSIGN in the sheet.`;
 }
 
 function findCurrentEntry(entries, roleplayName, currentCallsign) {
@@ -55,9 +93,7 @@ async function processPromotion({ roleplayName, currentCallsign, newRank }) {
 
   const currentEntry = findCurrentEntry(entries, roleplayName, currentCallsign);
   if (!currentEntry) {
-    throw new Error(
-      `Could not find **${roleplayName}** at callsign **${currentCallsign}**. Check the RP NAME and CALLSIGN in the sheet.`,
-    );
+    throw new Error(buildNotFoundError(entries, roleplayName, currentCallsign));
   }
 
   const openSlot = findOpenSlotInRank(entries, newRank);

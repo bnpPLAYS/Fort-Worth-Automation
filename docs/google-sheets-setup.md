@@ -10,6 +10,8 @@ Current Callsign: 3005
 New Rank: COMMANDER
 ```
 
+Works on one line or multiple lines. Each label must stay spelled exactly as shown.
+
 You can also use `RP Name:` instead of `Roleplay Name:`.
 
 Callsigns should be the **4-digit number** from column C (e.g. `3005`, not `30-05`).

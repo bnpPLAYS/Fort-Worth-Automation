@@ -13,6 +13,10 @@ function getCadetRankName() {
   return normalizeEnv(process.env.GOOGLE_CADET_RANK_NAME) || "Cadet";
 }
 
+function getProbationaryRankName() {
+  return normalizeEnv(process.env.GOOGLE_PROBATIONARY_RANK_NAME) || "Probationary Officer";
+}
+
 function getSpreadsheetId() {
   return normalizeEnv(process.env.GOOGLE_SHEETS_SPREADSHEET_ID);
 }
@@ -194,6 +198,7 @@ module.exports = {
   getSpreadsheetId,
   getRosterSheetName,
   getCadetRankName,
+  getProbationaryRankName,
   getCredentialsPath,
   getSheetsClient,
   getRosterRows,

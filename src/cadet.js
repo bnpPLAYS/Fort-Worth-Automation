@@ -15,10 +15,11 @@ const { getRoleplayNameFromMember, updateMemberCallsign } = require("./discord-c
 const { formatRoleplayInitials } = require("./roleplay-name");
 const {
   isSheetsConfigured,
-  assignCadetCallsign,
   assignMemberToOpenRank,
+  assignCadetCallsign,
   clearRosterForName,
 } = require("./google-sheets/roster-assign");
+const { getProbationaryRankName } = require("./google-sheets/client");
 
 const RA_COOLDOWN_MS = 15 * 60 * 1000;
 const RA_COOLDOWN_TYPE = "ride-along";
@@ -88,6 +89,13 @@ function buildRideAlongEmbed(request) {
   if (request.status === "passed") {
     embed.setTitle("Ride-Along — Passed");
     embed.addFields({ name: "Result", value: `Passed by <@${request.resolvedById}>`, inline: false });
+    if (request.rosterCallsign) {
+      embed.addFields({
+        name: "Assigned Callsign",
+        value: `**${request.rosterCallsign}** (${request.rosterRank ?? "Probationary Officer"})`,
+        inline: false,
+      });
+    }
   } else if (request.status === "failed") {
     embed.setTitle("Ride-Along — Failed");
     embed.addFields({ name: "Result", value: `Failed by <@${request.resolvedById}>`, inline: false });
@@ -357,6 +365,7 @@ async function handleRideAlongMessage(message) {
     applicantTag: message.author.tag,
     guildId: message.guild.id,
     requestUrl: message.url,
+    roleplayName: getRoleplayNameFromMember(message.member),
     robloxUser: parsed.robloxUser,
     discordUser: parsed.discordUser,
     availableFor: parsed.availableFor,
@@ -473,6 +482,28 @@ async function handleRideAlongInteraction(interaction) {
   }
 
   if (action === "pass") {
+    const roleplayName = request.roleplayName || getRoleplayNameFromMember(applicant);
+    const probationaryRank = getProbationaryRankName();
+
+    if (!isSheetsConfigured()) {
+      await interaction.editReply(
+        "Cannot pass ride-along — Google Sheets is not configured on the bot.",
+      );
+      return true;
+    }
+
+    let rosterResult;
+    try {
+      rosterResult = await assignMemberToOpenRank(roleplayName, probationaryRank);
+    } catch (error) {
+      console.error("Ride-along pass roster assignment failed:", error);
+      await interaction.editReply(
+        `Could not pass ride-along — roster update failed.\n\n${error.message}\n\n` +
+          "Add open **Probationary Officer** rows on the sheet (4-digit callsign, empty RP NAME), then try again.",
+      );
+      return true;
+    }
+
     await applicant.roles.remove(CADET_ROLE_IDS).catch((error) => {
       console.error("Failed to remove cadet roles on pass:", error);
     });
@@ -480,41 +511,38 @@ async function handleRideAlongInteraction(interaction) {
       console.error("Failed to assign probationary officer role:", error);
     });
 
-    const roleplayName = getRoleplayNameFromMember(applicant);
-    const probationaryRank =
-      process.env.GOOGLE_PROBATIONARY_RANK_NAME || GOOGLE_PROBATIONARY_RANK_NAME;
-    let rosterNote = "";
-
-    if (isSheetsConfigured()) {
-      try {
-        const rosterResult = await assignMemberToOpenRank(roleplayName, probationaryRank);
-        const nicknameResult = await updateMemberCallsign(
-          applicant,
-          rosterResult.newCallsign,
-          roleplayName,
-        );
-        rosterNote = ` Roster: **${rosterResult.newCallsign}** (${rosterResult.newRank}).`;
-        if (!nicknameResult.ok) {
-          rosterNote += ` Nickname not updated: ${nicknameResult.reason}`;
-        }
-      } catch (error) {
-        console.error("Ride-along pass roster assignment failed:", error);
-        rosterNote = ` Roster update failed: ${error.message}`;
-      }
-    }
+    const nicknameResult = await updateMemberCallsign(
+      applicant,
+      rosterResult.newCallsign,
+      roleplayName,
+    );
 
     request.status = "passed";
     request.resolvedById = interaction.user.id;
+    request.rosterCallsign = rosterResult.newCallsign;
+    request.rosterRank = rosterResult.newRank;
+    request.roleplayName = roleplayName;
     await updateRideAlongNotification(interaction.client, request);
+
+    let staffNote = `Moved **${roleplayName}** from **${rosterResult.previousCallsign ?? "cadet"}** to **${rosterResult.newCallsign}** (${rosterResult.newRank}).`;
+    if (!nicknameResult.ok) {
+      staffNote += ` Nickname not updated: ${nicknameResult.reason}`;
+    } else if (nicknameResult.changed) {
+      staffNote += ` Nickname: \`${nicknameResult.nickname}\`.`;
+    }
 
     await applicant.user
       .send(
         "Your ride-along has been marked **Passed**.\n\n" +
-          "You have been promoted to **Probationary Officer**. Welcome to the department.",
+          "You have been promoted to **Probationary Officer**.\n\n" +
+          `Your department callsign is **${rosterResult.newCallsign}**. You may use this callsign in-game.\n` +
+          (nicknameResult.ok && nicknameResult.changed
+            ? `Your Discord nickname is now \`${nicknameResult.nickname}\`.`
+            : ""),
       )
       .catch(() => null);
 
-    await interaction.editReply(`Marked **Passed** for ${applicant}.${rosterNote}`);
+    await interaction.editReply(`Marked **Passed** for ${applicant}.\n${staffNote}`);
     return true;
   }
 

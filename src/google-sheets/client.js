@@ -193,6 +193,7 @@ module.exports = {
   getSheetsConfigIssues,
   getSpreadsheetId,
   getRosterSheetName,
+  getCadetRankName,
   getCredentialsPath,
   getSheetsClient,
   getRosterRows,

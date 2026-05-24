@@ -3,9 +3,9 @@ const {
   batchUpdateCells,
   getRosterSheetName,
   isSheetsConfigured,
+  getCadetRankName,
 } = require("./client");
 const { ranksMatch } = require("../rank-matching");
-const { getCadetRankName } = require("./client");
 
 function normalize(value) {
   return String(value).trim().toLowerCase();

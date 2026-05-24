@@ -8,10 +8,12 @@ const {
   Routes,
   SlashCommandBuilder,
 } = require("discord.js");
-const { handlePanelCommand, handleInteraction } = require("./fastpass");
+const { handlePanelCommand, handleInteraction, MIN_WORDS } = require("./fastpass");
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.CLIENT_ID;
+
+let isStarting = false;
 
 if (!token) {
   console.error("Missing DISCORD_TOKEN in .env");
@@ -46,6 +48,7 @@ async function registerCommands() {
 
 client.once(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
+  console.log(`Fast Pass Part 2 minimum: ${MIN_WORDS} words per answer`);
 });
 
 client.on(Events.MessageCreate, async (message) => {
@@ -77,6 +80,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 async function main() {
+  if (isStarting) {
+    console.warn("Bot startup already in progress. Skipping duplicate start.");
+    return;
+  }
+
+  isStarting = true;
   await registerCommands();
   await client.login(token);
 }

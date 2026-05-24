@@ -10,6 +10,7 @@ const {
   PermissionFlagsBits,
 } = require("discord.js");
 const { getCooldownEnd, isOnCooldown, setCooldown } = require("./cooldowns");
+const { hasProcessed, markProcessed } = require("./panel-dedupe");
 
 const PANEL_COMMAND = "-panelfastpass";
 const BUTTON_CUSTOM_ID = "fastpass_apply";
@@ -87,7 +88,13 @@ function getSubmissionsChannelId() {
 }
 
 function countWords(text) {
-  return text.trim().split(/\s+/).filter(Boolean).length;
+  const normalized = text
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+  if (!normalized) return 0;
+  return normalized.split(" ").length;
 }
 
 function formatDuration(ms) {
@@ -234,22 +241,28 @@ function getApplication(appId) {
 }
 
 async function handlePanelCommand(message) {
-  if (!message.content.trim().toLowerCase().startsWith(PANEL_COMMAND)) return false;
+  if (message.content.trim().toLowerCase() !== PANEL_COMMAND) return false;
   if (message.author.bot) return false;
+
+  if (hasProcessed(message.id)) {
+    return true;
+  }
+
+  markProcessed(message.id);
 
   if (!message.member?.permissions?.has(PermissionFlagsBits.ManageGuild)) {
     await message.reply("You need **Manage Server** permission to post the Fast Pass panel.");
     return true;
   }
 
+  if (message.deletable) {
+    await message.delete().catch(() => {});
+  }
+
   await message.channel.send({
     embeds: [buildPanelEmbed()],
     components: [buildPanelButton()],
   });
-
-  if (message.deletable) {
-    await message.delete().catch(() => {});
-  }
 
   return true;
 }
@@ -354,9 +367,14 @@ async function handleInteraction(interaction) {
 
     for (const field of STAGE_TWO_FIELDS) {
       const answer = interaction.fields.getTextInputValue(field.id);
+      const wordCount = countWords(answer);
       stage2[field.id] = answer;
-      if (countWords(answer) < MIN_WORDS) {
-        tooShort.push(field.question);
+
+      if (wordCount < MIN_WORDS) {
+        tooShort.push({
+          question: field.question,
+          wordCount,
+        });
       }
     }
 
@@ -364,7 +382,7 @@ async function handleInteraction(interaction) {
       await interaction.reply({
         content:
           `Each answer in Part 2 must be at least **${MIN_WORDS} words**. These answers were too short:\n` +
-          tooShort.map((q) => `• ${q}`).join("\n") +
+          tooShort.map(({ question, wordCount }) => `• ${question} — **${wordCount}/${MIN_WORDS} words**`).join("\n") +
           "\n\nClick **Continue** again and resubmit with longer answers.",
         ephemeral: true,
       });
@@ -599,6 +617,7 @@ async function handleInteraction(interaction) {
 }
 
 module.exports = {
+  MIN_WORDS,
   handlePanelCommand,
   handleInteraction,
 };

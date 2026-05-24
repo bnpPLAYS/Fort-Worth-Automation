@@ -25,6 +25,7 @@ const RANK_SELECT_PREFIX = "fastpass_rank:";
 
 const MIN_WORDS = 20;
 const GUIDE_CHANNEL_ID = "1484990957299564666";
+const FASTPASS_PANEL_CHANNEL_ID = process.env.FASTPASS_PANEL_CHANNEL_ID || "1484948609546846290";
 
 const STAGE_ONE_FIELDS = [
   {
@@ -85,7 +86,7 @@ const pendingSessions = new Map();
 const applications = new Map();
 
 function getSubmissionsChannelId() {
-  return process.env.FASTPASS_SUBMISSIONS_CHANNEL_ID || "1484948609546846290";
+  return process.env.FASTPASS_SUBMISSIONS_CHANNEL_ID || "1498803252626718833";
 }
 
 function countWords(text) {
@@ -257,7 +258,16 @@ async function handlePanelCommand(message) {
     await message.delete().catch(() => {});
   }
 
-  await message.channel.send({
+  const panelChannel = await message.client.channels.fetch(FASTPASS_PANEL_CHANNEL_ID).catch(() => null);
+
+  if (!panelChannel?.isTextBased()) {
+    await message.channel.send(
+      "The Fast Pass panel channel could not be found. Check the bot configuration.",
+    );
+    return true;
+  }
+
+  await panelChannel.send({
     embeds: [buildPanelEmbed()],
     components: [buildPanelButton()],
   });

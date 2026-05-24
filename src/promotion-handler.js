@@ -49,8 +49,8 @@ async function handlePromotionMessage(message) {
         },
       );
 
-    if (result.division) {
-      embed.addFields({ name: "Division", value: result.division, inline: true });
+    if (result.rolls) {
+      embed.addFields({ name: "Rolls / Role", value: result.rolls, inline: true });
     }
 
     await processingMessage.edit({ content: null, embeds: [embed] });

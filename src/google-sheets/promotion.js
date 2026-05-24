@@ -6,8 +6,13 @@ function normalize(value) {
   return String(value).trim().toLowerCase();
 }
 
+function normalizeCallsign(value) {
+  return String(value).replace(/\D/g, "");
+}
+
 function parsePromotionMessage(content) {
-  const nameMatch = content.match(/Roleplay Name:\s*(.+)/i);
+  const nameMatch =
+    content.match(/Roleplay Name:\s*(.+)/i) || content.match(/RP Name:\s*(.+)/i);
   const callsignMatch = content.match(/Current Callsign:\s*(.+)/i);
   const rankMatch = content.match(/New Rank:\s*(.+)/i);
 
@@ -17,19 +22,19 @@ function parsePromotionMessage(content) {
 
   return {
     roleplayName: nameMatch[1].trim(),
-    currentCallsign: callsignMatch[1].trim(),
+    currentCallsign: normalizeCallsign(callsignMatch[1]),
     newRank: rankMatch[1].trim(),
   };
 }
 
 function findCurrentEntry(entries, roleplayName, currentCallsign) {
   const normalizedName = normalize(roleplayName);
-  const normalizedCallsign = normalize(currentCallsign);
+  const normalizedCallsign = normalizeCallsign(currentCallsign);
 
   return entries.find(
     (entry) =>
       normalize(entry.name) === normalizedName &&
-      normalize(entry.callsign) === normalizedCallsign &&
+      normalizeCallsign(entry.callsign) === normalizedCallsign &&
       entry.name.length > 0,
   );
 }
@@ -51,26 +56,27 @@ async function processPromotion({ roleplayName, currentCallsign, newRank }) {
   const currentEntry = findCurrentEntry(entries, roleplayName, currentCallsign);
   if (!currentEntry) {
     throw new Error(
-      `Could not find **${roleplayName}** at callsign **${currentCallsign}**. Check the name and callsign in the sheet.`,
+      `Could not find **${roleplayName}** at callsign **${currentCallsign}**. Check the RP NAME and CALLSIGN in the sheet.`,
     );
   }
 
   const openSlot = findOpenSlotInRank(entries, newRank);
   if (!openSlot) {
     throw new Error(
-      `No open callsign slot found for rank **${newRank}**. Add a vacant row (callsign filled, name empty) in the sheet.`,
+      `No open callsign slot found for rank **${newRank}**. Add a vacant row with that rank, a 4-digit callsign, and an empty RP NAME cell.`,
     );
   }
 
   const sheetName = getRosterSheetName();
+  const nameColumn = currentEntry.nameColumnLetter;
 
   await batchUpdateCells([
     {
-      range: `${sheetName}!C${currentEntry.rowNumber}`,
+      range: `${sheetName}!${nameColumn}${currentEntry.rowNumber}`,
       values: [[""]],
     },
     {
-      range: `${sheetName}!C${openSlot.rowNumber}`,
+      range: `${sheetName}!${openSlot.nameColumnLetter}${openSlot.rowNumber}`,
       values: [[roleplayName]],
     },
   ]);
@@ -80,7 +86,7 @@ async function processPromotion({ roleplayName, currentCallsign, newRank }) {
     previousCallsign: currentEntry.callsign,
     newRank: openSlot.rank,
     newCallsign: openSlot.callsign,
-    division: openSlot.division,
+    rolls: openSlot.rolls,
   };
 }
 

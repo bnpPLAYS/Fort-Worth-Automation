@@ -66,33 +66,31 @@ async function uniqueChannelName(guild, baseName) {
   return name.slice(0, 100);
 }
 
-function buildTicketPermissions(guild, openerId) {
-  return [
-    {
-      id: guild.roles.everyone.id,
-      deny: [PermissionFlagsBits.ViewChannel],
-    },
-    {
-      id: openerId,
-      allow: [
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.SendMessages,
-        PermissionFlagsBits.ReadMessageHistory,
-        PermissionFlagsBits.AttachFiles,
-        PermissionFlagsBits.EmbedLinks,
-      ],
-    },
-    {
-      id: STAFF_ROLE_ID,
-      allow: [
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.SendMessages,
-        PermissionFlagsBits.ReadMessageHistory,
-        PermissionFlagsBits.ManageMessages,
-        PermissionFlagsBits.AttachFiles,
-      ],
-    },
-  ];
+async function setupTicketChannel(guild, { name, parentId, openerId, reportedUserId, reason }) {
+  const channel = await guild.channels.create({
+    name,
+    type: ChannelType.GuildText,
+    parent: parentId,
+    reason,
+  });
+
+  await channel.lockPermissions();
+
+  await channel.permissionOverwrites.edit(openerId, {
+    ViewChannel: true,
+    SendMessages: true,
+    ReadMessageHistory: true,
+    AttachFiles: true,
+    EmbedLinks: true,
+  });
+
+  if (reportedUserId) {
+    await channel.permissionOverwrites.edit(reportedUserId, {
+      ViewChannel: false,
+    });
+  }
+
+  return channel;
 }
 
 function isStaff(member) {
@@ -268,11 +266,11 @@ async function createReportTicket(interaction, reportedUser, whatHappened) {
   const baseName = `${sanitizeChannelName(reportedUser.username)}-report`;
   const channelName = await uniqueChannelName(guild, baseName);
 
-  const channel = await guild.channels.create({
+  const channel = await setupTicketChannel(guild, {
     name: channelName,
-    type: ChannelType.GuildText,
-    parent: REPORT_CATEGORY_ID,
-    permissionOverwrites: buildTicketPermissions(guild, opener.id),
+    parentId: REPORT_CATEGORY_ID,
+    openerId: opener.id,
+    reportedUserId: reportedUser.id,
     reason: `Report ticket opened by ${opener.tag}`,
   });
 
@@ -316,11 +314,10 @@ async function createOtherTicket(interaction) {
   const baseName = `${sanitizeChannelName(displayName)}-support`;
   const channelName = await uniqueChannelName(guild, baseName);
 
-  const channel = await guild.channels.create({
+  const channel = await setupTicketChannel(guild, {
     name: channelName,
-    type: ChannelType.GuildText,
-    parent: OTHER_CATEGORY_ID,
-    permissionOverwrites: buildTicketPermissions(guild, opener.id),
+    parentId: OTHER_CATEGORY_ID,
+    openerId: opener.id,
     reason: `Support ticket opened by ${opener.user.tag}`,
   });
 

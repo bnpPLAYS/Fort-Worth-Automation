@@ -8,7 +8,7 @@ const {
   TextInputBuilder,
   TextInputStyle,
 } = require("discord.js");
-const { EMBED_COLOR, RA_STAFF_ROLE_IDS, PROBATIONARY_OFFICER_ROLE_ID, GOOGLE_PROBATIONARY_RANK_NAME, CADET_ENROLL_COOLDOWN_MS } = require("./constants");
+const { EMBED_COLOR, RA_STAFF_ROLE_IDS, PROBATIONARY_OFFICER_ROLE_ID, CADET_ENROLL_COOLDOWN_MS } = require("./constants");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { isOnCooldown, setCooldown, getCooldownRemainingMs } = require("./cooldowns");
 const { getRoleplayNameFromMember, updateMemberCallsign } = require("./discord-callsign");

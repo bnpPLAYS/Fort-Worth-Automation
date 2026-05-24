@@ -12,7 +12,8 @@ const {
 const { getCooldownEnd, isOnCooldown, setCooldown } = require("./cooldowns");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { EMBED_COLOR, STAFF_PING_ROLE_ID } = require("./constants");
-const { getRoleplayNameFromMember, updateMemberCallsign } = require("./discord-callsign");
+const { updateMemberCallsign } = require("./discord-callsign");
+const { formatRoleplayInitials } = require("./roleplay-name");
 const {
   isSheetsConfigured,
   assignMemberToOpenRank,
@@ -33,6 +34,14 @@ const GUIDE_CHANNEL_ID = "1484990957299564666";
 const FASTPASS_PANEL_CHANNEL_ID = process.env.FASTPASS_PANEL_CHANNEL_ID || "1484948609546846290";
 
 const STAGE_ONE_FIELDS = [
+  {
+    id: "roleplay_name",
+    label: "Full roleplay name?",
+    question: "Roleplay Name",
+    placeholder: "e.g. John Smith",
+    style: "short",
+    maxLength: 64,
+  },
   {
     id: "activity",
     label: "Weekly server activity?",
@@ -133,9 +142,9 @@ function buildModal(title, customId, fields) {
           .setCustomId(field.id)
           .setLabel(field.label)
           .setPlaceholder(field.placeholder)
-          .setStyle(TextInputStyle.Paragraph)
+          .setStyle(field.style === "short" ? TextInputStyle.Short : TextInputStyle.Paragraph)
           .setRequired(true)
-          .setMaxLength(4000),
+          .setMaxLength(field.maxLength ?? 4000),
       ),
     );
   }
@@ -149,7 +158,8 @@ function buildPanelEmbed() {
     .setTitle("Fast Pass Application")
     .setDescription(
       "Click **Fast Pass** below to begin your application.\n\n" +
-        "You will complete a two-part form. The second part requires detailed answers of at least 20 words each.",
+        "You will enter your **full roleplay name** first (e.g. John Smith → roster name **J. Smith**).\n\n" +
+        "The second part requires detailed answers of at least 20 words each.",
     )
     .setFooter({ text: "Fort Worth Automation" });
 }
@@ -164,8 +174,19 @@ function buildPanelButton() {
 }
 
 function buildSubmissionEmbed(application) {
-  const { userId, userTag, stage1, stage2, durationMs, status, reviewerTag, rankLabel, denyReason } =
-    application;
+  const {
+    userId,
+    userTag,
+    stage1,
+    stage2,
+    durationMs,
+    status,
+    reviewerTag,
+    rankLabel,
+    denyReason,
+    roleplayName,
+    roleplayNameRaw,
+  } = application;
 
   const embed = new EmbedBuilder()
     .setColor(EMBED_COLOR)
@@ -184,7 +205,18 @@ function buildSubmissionEmbed(application) {
     })
     .setTimestamp(application.submittedAt);
 
+  if (roleplayName) {
+    embed.addFields({
+      name: "Roster Name",
+      value: roleplayNameRaw
+        ? `${roleplayName} *(from ${roleplayNameRaw})*`
+        : roleplayName,
+      inline: true,
+    });
+  }
+
   for (const field of STAGE_ONE_FIELDS) {
+    if (field.id === "roleplay_name") continue;
     embed.addFields({
       name: field.question,
       value: truncateField(stage1[field.id]),
@@ -318,7 +350,18 @@ async function handleInteraction(interaction) {
     }
 
     session.stage1 = {};
+    try {
+      const rawRoleplayName = interaction.fields.getTextInputValue("roleplay_name");
+      session.roleplayNameRaw = rawRoleplayName.trim();
+      session.roleplayName = formatRoleplayInitials(rawRoleplayName);
+    } catch (error) {
+      pendingSessions.delete(interaction.user.id);
+      await interaction.reply({ content: error.message, ephemeral: true });
+      return true;
+    }
+
     for (const field of STAGE_ONE_FIELDS) {
+      if (field.id === "roleplay_name") continue;
       session.stage1[field.id] = interaction.fields.getTextInputValue(field.id);
     }
 
@@ -418,6 +461,8 @@ async function handleInteraction(interaction) {
       userId,
       userTag: interaction.user.tag,
       guildId: session.guildId,
+      roleplayName: session.roleplayName,
+      roleplayNameRaw: session.roleplayNameRaw,
       stage1: session.stage1,
       stage2,
       durationMs,
@@ -519,6 +564,7 @@ async function handleInteraction(interaction) {
 
     const guild = await interaction.client.guilds.fetch(application.guildId).catch(() => null);
     const member = await guild?.members.fetch(application.userId).catch(() => null);
+    const rankLabel = rank?.label ?? "Unknown Rank";
 
     if (member && guild) {
       await member.roles.add(roleId).catch((error) => {
@@ -527,11 +573,11 @@ async function handleInteraction(interaction) {
     }
 
     let rosterSummary = "";
-    if (member && isSheetsConfigured()) {
-      const roleplayName = getRoleplayNameFromMember(member);
+    if (member && isSheetsConfigured() && application.roleplayName) {
+      const roleplayName = application.roleplayName;
 
       try {
-        const rosterResult = await assignMemberToOpenRank(roleplayName, application.rankLabel);
+        const rosterResult = await assignMemberToOpenRank(roleplayName, rankLabel);
         const nicknameResult = await updateMemberCallsign(
           member,
           rosterResult.newCallsign,
@@ -552,7 +598,7 @@ async function handleInteraction(interaction) {
     }
 
     application.status = "accepted";
-    application.rankLabel = rank?.label ?? "Unknown Rank";
+    application.rankLabel = rankLabel;
     application.rankId = roleId;
     application.reviewerTag = interaction.user.tag;
 
@@ -577,7 +623,7 @@ async function handleInteraction(interaction) {
         const callsignMatch = rosterSummary.match(/callsign \*\*(.+?)\*\*/);
         if (callsignMatch) {
           dmContent +=
-            `\n\nYour department callsign is **${callsignMatch[1]}**. You may use this callsign in-game.`;
+            `\n\nYour roster name is **${application.roleplayName}** and your department callsign is **${callsignMatch[1]}**. You may use this callsign in-game.`;
         }
       } else if (rosterSummary.includes("Roster assignment failed")) {
         dmContent +=

@@ -50,10 +50,17 @@ function getRoleplayNameFromMember(member) {
 
 function buildDisplayNameWithCallsign(displayName, newCallsign, roleplayName) {
   const callsign = formatCallsignForDisplay(newCallsign);
+  const formattedName = String(roleplayName ?? "").trim();
+
+  if (formattedName) {
+    const nickname = `${callsign} | ${formattedName}`;
+    return nickname.length > 32 ? nickname.slice(0, 32).trim() : nickname;
+  }
+
   const current = String(displayName ?? "").trim();
-  const fallbackName = String(roleplayName ?? "").trim() || current;
 
   let updated;
+  const fallbackName = current;
   if (ANY_CALLSIGN_PREFIX_PATTERN.test(current)) {
     updated = current.replace(ANY_CALLSIGN_PREFIX_PATTERN, `${callsign} | `);
   } else if (CADET_CALLSIGN_WORD_PATTERN.test(current)) {

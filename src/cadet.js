@@ -3,12 +3,16 @@ const {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  ModalBuilder,
   PermissionFlagsBits,
+  TextInputBuilder,
+  TextInputStyle,
 } = require("discord.js");
 const { EMBED_COLOR, RA_STAFF_ROLE_IDS, PROBATIONARY_OFFICER_ROLE_ID, GOOGLE_PROBATIONARY_RANK_NAME, CADET_ENROLL_COOLDOWN_MS } = require("./constants");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { isOnCooldown, setCooldown, getCooldownRemainingMs } = require("./cooldowns");
 const { getRoleplayNameFromMember, updateMemberCallsign } = require("./discord-callsign");
+const { formatRoleplayInitials } = require("./roleplay-name");
 const {
   isSheetsConfigured,
   assignCadetCallsign,
@@ -26,6 +30,7 @@ const RA_FAIL_PREFIX = "ra_fail:";
 
 const CADET_PANEL_COMMAND = "-becomecadetpanel";
 const CADET_ENROLL_BUTTON_ID = "cadet_enroll";
+const CADET_ENROLL_MODAL_ID = "cadet_enroll_modal";
 
 const CADET_ROLE_IDS = [
   "1495414411840454676",
@@ -123,6 +128,7 @@ function buildCadetPanelEmbed() {
     .setDescription(
       "# Become a Cadet\n\n" +
         "Click the button below to receive your **Cadet** roles and begin the ride-along process.\n\n" +
+        "You will be asked for your **full roleplay name** (e.g. John Smith). The roster will list you as **J. Smith**.\n\n" +
         "After enrolling, you must complete **2 ride-alongs** before you can become a **Probationary Officer**.\n\n" +
         `File a ride-along request in <#${RA_REQUEST_CHANNEL_ID}> when you are ready.\n\n` +
         "**Format:**\n" +
@@ -164,8 +170,45 @@ async function handleCadetPanelCommand(message) {
   return true;
 }
 
+function buildCadetEnrollModal() {
+  return new ModalBuilder()
+    .setCustomId(CADET_ENROLL_MODAL_ID)
+    .setTitle("Become Cadet")
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("roleplay_name")
+          .setLabel("Full roleplay name")
+          .setPlaceholder("e.g. John Smith")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(64),
+      ),
+    );
+}
+
 async function handleCadetInteraction(interaction) {
-  if (!interaction.isButton() || interaction.customId !== CADET_ENROLL_BUTTON_ID) {
+  if (interaction.isButton() && interaction.customId === CADET_ENROLL_BUTTON_ID) {
+    const member = interaction.member;
+    if (!member) {
+      await interaction.reply({ content: "This can only be used in a server.", ephemeral: true });
+      return true;
+    }
+
+    if (isOnCooldown(member.id, CADET_ENROLL_COOLDOWN_TYPE)) {
+      const remainingMs = getCooldownRemainingMs(member.id, CADET_ENROLL_COOLDOWN_TYPE);
+      await interaction.reply({
+        content: `You cannot become a cadet again yet. Try again in **${formatCooldownDuration(remainingMs)}**.`,
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    await interaction.showModal(buildCadetEnrollModal());
+    return true;
+  }
+
+  if (!interaction.isModalSubmit() || interaction.customId !== CADET_ENROLL_MODAL_ID) {
     return false;
   }
 
@@ -185,6 +228,16 @@ async function handleCadetInteraction(interaction) {
     return true;
   }
 
+  let roleplayName;
+  let roleplayNameRaw;
+  try {
+    roleplayNameRaw = interaction.fields.getTextInputValue("roleplay_name").trim();
+    roleplayName = formatRoleplayInitials(roleplayNameRaw);
+  } catch (error) {
+    await interaction.editReply(error.message);
+    return true;
+  }
+
   const rolesToAdd = CADET_ROLE_IDS.filter((roleId) => !member.roles.cache.has(roleId));
 
   if (rolesToAdd.length > 0) {
@@ -194,14 +247,13 @@ async function handleCadetInteraction(interaction) {
   }
 
   let reply =
-    "You have been enrolled as a **Cadet** and received your cadet roles.\n\n" +
+    `You have been enrolled as a **Cadet** and received your cadet roles.\n\n` +
+    `Your roster name is **${roleplayName}** (from *${roleplayNameRaw}*).\n\n` +
     "You must complete **2 ride-alongs** before you can become a **Probationary Officer**.\n\n" +
     `When you are ready, file a ride-along request in <#${RA_REQUEST_CHANNEL_ID}> using this format:\n` +
     "```\nRoblox User:\nDiscord User:\nAvailable For:\n```";
 
   if (isSheetsConfigured()) {
-    const roleplayName = getRoleplayNameFromMember(member);
-
     try {
       const cadetAssignment = await assignCadetCallsign(roleplayName);
       const nicknameResult = await updateMemberCallsign(

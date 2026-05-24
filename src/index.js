@@ -59,6 +59,17 @@ client.on(Events.MessageCreate, async (message) => {
   }
 });
 
+function isBenignInteractionError(error) {
+  const code = error?.code;
+  return (
+    code === 40060 ||
+    code === 10062 ||
+    code === 10008 ||
+    error?.message?.includes("already been acknowledged") ||
+    error?.message?.includes("Unknown interaction")
+  );
+}
+
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     const handled = await handleInteraction(interaction);
@@ -68,13 +79,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.reply("Pong!");
     }
   } catch (error) {
+    if (isBenignInteractionError(error)) {
+      console.warn("Ignored duplicate or expired interaction:", error.message);
+      return;
+    }
+
     console.error("Interaction handler error:", error);
 
     const reply = { content: "Something went wrong. Please try again.", ephemeral: true };
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp(reply).catch(() => {});
-    } else if (interaction.isRepliable()) {
-      await interaction.reply(reply).catch(() => {});
+    try {
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp(reply);
+      } else if (interaction.isRepliable()) {
+        await interaction.reply(reply);
+      }
+    } catch (replyError) {
+      if (!isBenignInteractionError(replyError)) {
+        console.error("Failed to send interaction error reply:", replyError);
+      }
     }
   }
 });

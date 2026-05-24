@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 const DATA_DIR = path.join(__dirname, "..", "data");
-const PROCESSED_FILE = path.join(DATA_DIR, "processed-panels.json");
+const PROCESSED_FILE = path.join(DATA_DIR, "processed-events.json");
 const TTL_MS = 5 * 60 * 1000;
 
 function ensureDataDir() {
@@ -35,16 +35,16 @@ function pruneProcessed(processed) {
   }
 }
 
-function hasProcessed(messageId) {
+function hasProcessed(key) {
   const processed = loadProcessed();
   pruneProcessed(processed);
-  return Boolean(processed[messageId]);
+  return Boolean(processed[key]);
 }
 
-function markProcessed(messageId) {
+function markProcessed(key) {
   const processed = loadProcessed();
   pruneProcessed(processed);
-  processed[messageId] = Date.now();
+  processed[key] = Date.now();
   saveProcessed(processed);
 }
 

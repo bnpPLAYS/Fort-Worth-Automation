@@ -244,11 +244,11 @@ async function handlePanelCommand(message) {
   if (message.content.trim().toLowerCase() !== PANEL_COMMAND) return false;
   if (message.author.bot) return false;
 
-  if (hasProcessed(message.id)) {
+  if (hasProcessed(`panel:${message.id}`)) {
     return true;
   }
 
-  markProcessed(message.id);
+  markProcessed(`panel:${message.id}`);
 
   if (!message.member?.permissions?.has(PermissionFlagsBits.ManageGuild)) {
     await message.reply("You need **Manage Server** permission to post the Fast Pass panel.");
@@ -268,6 +268,12 @@ async function handlePanelCommand(message) {
 }
 
 async function handleInteraction(interaction) {
+  const dedupeKey = `interaction:${interaction.id}`;
+  if (hasProcessed(dedupeKey)) {
+    return true;
+  }
+  markProcessed(dedupeKey);
+
   if (interaction.isButton() && interaction.customId === BUTTON_CUSTOM_ID) {
     if (isOnCooldown(interaction.user.id)) {
       const cooldownEnd = getCooldownEnd(interaction.user.id);
@@ -362,6 +368,8 @@ async function handleInteraction(interaction) {
       return true;
     }
 
+    await interaction.deferReply({ ephemeral: true });
+
     const stage2 = {};
     const tooShort = [];
 
@@ -379,17 +387,14 @@ async function handleInteraction(interaction) {
     }
 
     if (tooShort.length > 0) {
-      await interaction.reply({
+      await interaction.editReply({
         content:
           `Each answer in Part 2 must be at least **${MIN_WORDS} words**. These answers were too short:\n` +
           tooShort.map(({ question, wordCount }) => `• ${question} — **${wordCount}/${MIN_WORDS} words**`).join("\n") +
           "\n\nClick **Continue** again and resubmit with longer answers.",
-        ephemeral: true,
       });
       return true;
     }
-
-    await interaction.deferReply({ ephemeral: true });
 
     const endTime = Date.now();
     const durationMs = endTime - session.startTime;
@@ -422,17 +427,32 @@ async function handleInteraction(interaction) {
       return true;
     }
 
-    const submissionMessage = await submissionsChannel.send({
-      embeds: [buildSubmissionEmbed(application)],
-      components: [buildReviewButtons(appId)],
-    });
+    let submissionMessage;
+    try {
+      submissionMessage = await submissionsChannel.send({
+        embeds: [buildSubmissionEmbed(application)],
+        components: [buildReviewButtons(appId)],
+      });
+    } catch (sendError) {
+      applications.delete(appId);
+      console.error("Failed to send Fast Pass submission:", sendError);
+      await interaction.editReply(
+        "Your application could not be sent due to a Discord error. Contact an admin.",
+      );
+      return true;
+    }
 
     application.messageId = submissionMessage.id;
-    application.channelId = submissionChannel.id;
+    application.channelId = submissionsChannel.id;
 
-    await interaction.editReply(
-      `Your Fast Pass application has been submitted! It took you **${formatDuration(durationMs)}** to complete.`,
-    );
+    try {
+      await interaction.editReply(
+        `Your Fast Pass application has been submitted! It took you **${formatDuration(durationMs)}** to complete.`,
+      );
+    } catch (editError) {
+      console.warn("Application submitted, but success reply failed:", editError.message);
+    }
+
     return true;
   }
 

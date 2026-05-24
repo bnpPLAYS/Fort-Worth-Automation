@@ -1,15 +1,14 @@
 const { PermissionFlagsBits } = require("discord.js");
 const { STAFF_PING_ROLE_ID } = require("./constants");
-
-function normalizeRank(value) {
-  return String(value).trim().toLowerCase();
-}
+const { ranksMatch } = require("./rank-matching");
 
 function memberHasRankRole(member, rankName) {
-  const target = normalizeRank(rankName);
-  if (!target) return false;
+  if (!String(rankName).trim()) return false;
 
-  return member.roles.cache.some((role) => normalizeRank(role.name) === target);
+  return member.roles.cache.some((role) => {
+    if (role.id === member.guild.id) return false;
+    return ranksMatch(rankName, role.name);
+  });
 }
 
 function getMemberRankRoleNames(member) {

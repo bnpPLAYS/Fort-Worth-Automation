@@ -26,7 +26,7 @@ Staff with **Manage Server** or the staff ping role can post promotions for othe
 
 ### Rank eligibility (Discord roles)
 
-The person being promoted must **already have** a Discord role whose name matches `New Rank:` (case-insensitive). For example, you cannot request **Chief** unless you have a **Chief** role in Discord.
+The person being promoted must **already have** a Discord role that matches `New Rank:` (case-insensitive). Prefixes are ignored — `lieutenant` matches a role named `FWPD | Lieutenant`. You cannot request **Chief** unless you have a role that includes **Chief** as the rank name.
 
 Staff with **Manage Server** or the staff ping role can post promotions for others without this check.
 

@@ -1,4 +1,5 @@
 const { getRosterRows, batchUpdateCells, getRosterSheetName } = require("./client");
+const { ranksMatch } = require("../rank-matching");
 
 const PROMOTION_CHANNEL_ID = "1499207295895339048";
 
@@ -78,11 +79,9 @@ function findCurrentEntry(entries, roleplayName, currentCallsign) {
 }
 
 function findOpenSlotInRank(entries, newRank) {
-  const normalizedRank = normalize(newRank);
-
   return entries.find(
     (entry) =>
-      normalize(entry.rank) === normalizedRank &&
+      ranksMatch(newRank, entry.rank) &&
       entry.callsign.length > 0 &&
       entry.name.length === 0,
   );

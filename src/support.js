@@ -112,18 +112,14 @@ function withTicketBanner(embed) {
 function buildAssistanceHubEmbed() {
   return new EmbedBuilder()
     .setColor(EMBED_COLOR)
-    .setTitle("Assistance Hub")
     .setDescription(
-      "**General Support**\n" +
-        "• Discord Inquiries\n" +
-        "• General Support\n\n" +
-        "**Professional Standards Division**\n" +
-        "• Officer Reports\n" +
-        "• Appealing Infractions\n\n" +
-        "**High Command**\n" +
-        "• Major concerns\n" +
-        "• Supervisory+ Reporting\n" +
-        "• Fast Passes",
+      "# Assistance Hub\n\n" +
+        "Click **Contact Support** below to open a ticket or application.\n\n" +
+        "**Available options:**\n" +
+        "• **Other** — General support tickets\n" +
+        "• **Fast Pass** — Department Fast Pass application\n" +
+        "• **Report** — Report a member or officer\n" +
+        "• **Supervisor Exam** — Supervisor promotion exam",
     )
     .setImage(`attachment://${BANNER_FILENAME}`)
     .setFooter({ text: "Fort Worth Police Department" });

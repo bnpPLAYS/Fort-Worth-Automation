@@ -40,11 +40,12 @@ Discord bot built with [discord.js](https://discord.js.org/) v14.
 
 1. Send `-supportpanel` (requires **Manage Server**) to post the Assistance Hub with a red **Contact Support** button.
 2. **FastPass** — opens the existing Fast Pass application UI.
-3. **Report** — select a member, describe what happened, opens `{member}-report` in the report category with an Internal Affairs embed. `@here` is pinged after the opener sends their first message (evidence/clips).
-4. **Other** — opens `{username}-support` in the general support category with a welcome embed and `@here` ping.
-5. Staff use `/staffpanel` inside a ticket channel for **Close Ticket** (DMs reason to opener), **Close Request**, or **Ticket Advance** (escalates category and pings staff role).
-6. **Close Request** sends the opener a **Close Ticket** button they can press to self-close.
-7. When any ticket closes, a `.txt` transcript (messages + attachment/image links) is sent to channel `1485036121673961512`.
+3. **Supervisor Exam** — requires role `1501804405366718534`; five questions (20+ words each), submitted to channel `1507976263141163008` with completion time.
+4. **Report** — select a member, describe what happened, opens `{member}-report` in the report category with an Internal Affairs embed. `@here` is pinged after the opener sends their first message (evidence/clips).
+5. **Other** — opens `{username}-support` in the general support category with a welcome embed and `@here` ping.
+6. Staff use `/staffpanel` inside a ticket channel for **Close Ticket** (DMs reason to opener), **Close Request**, or **Ticket Advance** (escalates category and pings staff role).
+7. **Close Request** sends the opener a **Close Ticket** button they can press to self-close.
+8. When any ticket closes, a `.txt` transcript (messages + attachment/image links) is sent to channel `1485036121673961512`.
 
 The bot needs **Manage Channels** permission and its role must be above ticket categories and the staff role. The bot also needs **Read Message History** in ticket channels for transcripts.
 

@@ -17,6 +17,7 @@ const { getTicket, saveTicket, deleteTicket, findOpenTicketByOpener } = require(
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { EMBED_COLOR } = require("./constants");
 const { closeTicket } = require("./transcripts");
+const { TYPE_SUPERVISOR_EXAM_ID, handleSupervisorExamInteraction } = require("./supervisor-exam");
 
 const SUPPORT_PANEL_COMMAND = "-supportpanel";
 
@@ -160,6 +161,10 @@ function buildSupportTypeButtons() {
     new ButtonBuilder()
       .setCustomId(TYPE_OTHER_ID)
       .setLabel("Other")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(TYPE_SUPERVISOR_EXAM_ID)
+      .setLabel("Supervisor Exam")
       .setStyle(ButtonStyle.Secondary),
   );
 }
@@ -390,6 +395,9 @@ async function handleStaffPanelCommand(interaction) {
 }
 
 async function handleSupportInteraction(interaction) {
+  const examHandled = await handleSupervisorExamInteraction(interaction);
+  if (examHandled) return true;
+
   if (interaction.isButton() && interaction.customId === CONTACT_BUTTON_ID) {
     await interaction.reply({
       content: "Select the type of support you need:",

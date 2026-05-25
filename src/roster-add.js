@@ -2,11 +2,12 @@ const { EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder } = require("disc
 const { EMBED_COLOR, ROSTER_ADD_STAFF_ROLE_IDS } = require("./constants");
 const { formatRoleplayInitials } = require("./roleplay-name");
 const { updateMemberCallsign } = require("./discord-callsign");
-const { getRankOptionById, RANK_OPTIONS } = require("./rank-options");
+const { resolveRankForRosterAdd } = require("./rank-options");
 const {
   isSheetsConfigured,
   getSheetsConfigHelpMessage,
 } = require("./google-sheets/client");
+const { getRosterRanksWithOpenSlots } = require("./google-sheets/roster-ranks");
 const {
   assignMemberToOpenRank,
   assignCadetCallsign,
@@ -14,6 +15,7 @@ const {
 } = require("./google-sheets/roster-assign");
 
 const COMMAND_NAME = "rosteradd";
+const AUTOCOMPLETE_MAX = 25;
 
 function canUseRosterAdd(member) {
   if (
@@ -27,19 +29,6 @@ function canUseRosterAdd(member) {
 }
 
 function buildRosterAddCommand() {
-  const rankOption = (option) => {
-    let builder = option
-      .setName("rank")
-      .setDescription("Roster rank — assigns the next open callsign in that rank")
-      .setRequired(true);
-
-    for (const rank of RANK_OPTIONS) {
-      builder = builder.addChoices({ name: rank.label, value: rank.id });
-    }
-
-    return builder;
-  };
-
   return new SlashCommandBuilder()
     .setName(COMMAND_NAME)
     .setDescription("Add a member to the Google roster and link their Discord account")
@@ -53,7 +42,62 @@ function buildRosterAddCommand() {
         .setRequired(true)
         .setMaxLength(64),
     )
-    .addStringOption(rankOption);
+    .addStringOption((option) =>
+      option
+        .setName("rank")
+        .setDescription("Roster rank from the sheet (type to search ranks with open slots)")
+        .setRequired(true)
+        .setAutocomplete(true),
+    );
+}
+
+function formatRankChoiceName(rank, openCount) {
+  const label = `${rank} (${openCount} open)`;
+  return label.length > 100 ? `${rank.slice(0, 90)}… (${openCount} open)` : label;
+}
+
+async function handleRosterAddAutocomplete(interaction) {
+  if (!interaction.isAutocomplete() || interaction.commandName !== COMMAND_NAME) {
+    return false;
+  }
+
+  const focused = interaction.options.getFocused(true);
+  if (focused.name !== "rank") {
+    return false;
+  }
+
+  if (!canUseRosterAdd(interaction.member)) {
+    await interaction.respond([]);
+    return true;
+  }
+
+  if (!isSheetsConfigured()) {
+    await interaction.respond([]);
+    return true;
+  }
+
+  try {
+    const ranks = await getRosterRanksWithOpenSlots();
+    const query = String(focused.value ?? "")
+      .trim()
+      .toLowerCase();
+
+    const filtered = query
+      ? ranks.filter((entry) => entry.rank.toLowerCase().includes(query))
+      : ranks;
+
+    const choices = filtered.slice(0, AUTOCOMPLETE_MAX).map((entry) => ({
+      name: formatRankChoiceName(entry.rank, entry.openCount),
+      value: entry.rank.slice(0, 100),
+    }));
+
+    await interaction.respond(choices);
+  } catch (error) {
+    console.error("Roster add autocomplete failed:", error);
+    await interaction.respond([]);
+  }
+
+  return true;
 }
 
 async function assignRolesToMember(member, roleIds) {
@@ -99,13 +143,17 @@ async function handleRosterAddCommand(interaction) {
 
   const targetUser = interaction.options.getUser("member", true);
   const fullName = interaction.options.getString("roleplay_name", true).trim();
-  const rankId = interaction.options.getString("rank", true);
-  const rankConfig = getRankOptionById(rankId);
+  const rankValue = interaction.options.getString("rank", true).trim();
 
-  if (!rankConfig) {
-    await interaction.reply({ content: "Invalid rank selected.", ephemeral: true });
+  if (!rankValue) {
+    await interaction.reply({
+      content: "Pick a **rank** from the autocomplete list (ranks with open callsign slots on the sheet).",
+      ephemeral: true,
+    });
     return true;
   }
+
+  const rankConfig = resolveRankForRosterAdd(interaction.guild, rankValue);
 
   let roleplayName;
   try {
@@ -138,13 +186,16 @@ async function handleRosterAddCommand(interaction) {
     if (rankConfig.useCadetCallsign) {
       rosterResult = await assignCadetCallsign(roleplayName);
     } else {
-      rosterResult = await assignMemberToOpenRank(roleplayName, rankConfig.label);
+      rosterResult = await assignMemberToOpenRank(roleplayName, rankConfig.sheetRank);
     }
 
     const callsign = rosterResult.newCallsign ?? rosterResult.callsign;
     const sheetRank = rosterResult.newRank ?? rosterResult.rank;
 
-    const roleResult = await assignRolesToMember(member, rankConfig.discordRoleIds);
+    const roleResult =
+      rankConfig.discordRoleIds.length > 0
+        ? await assignRolesToMember(member, rankConfig.discordRoleIds)
+        : { added: [], failed: [], skipped: true };
 
     const nicknameResult = await updateMemberCallsign(member, callsign, roleplayName);
 
@@ -160,7 +211,11 @@ async function handleRosterAddCommand(interaction) {
       );
 
     const notes = [];
-    if (roleResult.failed.length > 0) {
+    if (roleResult.skipped) {
+      notes.push(
+        "No matching Discord role found for this rank — roster and nickname were still updated.",
+      );
+    } else if (roleResult.failed.length > 0) {
       notes.push(
         `Could not assign all Discord roles (${roleResult.error ?? "check bot role hierarchy"}).`,
       );
@@ -210,5 +265,6 @@ async function handleRosterAddCommand(interaction) {
 module.exports = {
   buildRosterAddCommand,
   handleRosterAddCommand,
+  handleRosterAddAutocomplete,
   canUseRosterAdd,
 };

@@ -95,6 +95,8 @@ Staff with roles `1484950025472704643`, `1484950653045440532`, or `1484949625281
 /rosteradd member:@User roleplay_name:John Smith rank:Probationary Officer
 ```
 
+For **rank**, start typing — the bot suggests every rank on the sheet that currently has an **open callsign** (up to 25 matches). Labels show how many open slots exist, e.g. `LIEUTENANT (2 open)`.
+
 - Formats the name for the sheet (e.g. **J. Smith**)
 - Fails if that RP name is already on the roster
 - Assigns the next open callsign for the chosen rank

@@ -17,7 +17,11 @@ const {
 } = require("./cadet");
 const { handlePromotionMessage } = require("./promotion-handler");
 const { handleRosterCheckCommand } = require("./roster-check");
-const { buildRosterAddCommand, handleRosterAddCommand } = require("./roster-add");
+const {
+  buildRosterAddCommand,
+  handleRosterAddCommand,
+  handleRosterAddAutocomplete,
+} = require("./roster-add");
 const {
   handleSupportPanelCommand,
   handleStaffPanelCommand,
@@ -103,6 +107,11 @@ function isBenignInteractionError(error) {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
+    if (interaction.isAutocomplete()) {
+      const handledAutocomplete = await handleRosterAddAutocomplete(interaction);
+      if (handledAutocomplete) return;
+    }
+
     let handled = await handleInteraction(interaction);
     if (handled) return;
 

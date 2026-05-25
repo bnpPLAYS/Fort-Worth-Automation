@@ -17,6 +17,7 @@ const {
 } = require("./cadet");
 const { handlePromotionMessage } = require("./promotion-handler");
 const { handleRosterCheckCommand } = require("./roster-check");
+const { buildRosterAddCommand, handleRosterAddCommand } = require("./roster-add");
 const {
   handleSupportPanelCommand,
   handleStaffPanelCommand,
@@ -62,6 +63,7 @@ const commands = [
         .setDescription("Optional: check if this rank has an open callsign slot")
         .setRequired(false),
     ),
+  buildRosterAddCommand(),
 ].map((command) => command.toJSON());
 
 async function registerCommands() {
@@ -117,6 +119,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
 
     handled = await handleRosterCheckCommand(interaction);
+    if (handled) return;
+
+    handled = await handleRosterAddCommand(interaction);
     if (handled) return;
 
     if (interaction.isChatInputCommand() && interaction.commandName === "ping") {

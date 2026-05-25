@@ -33,11 +33,7 @@ const CADET_PANEL_COMMAND = "-becomecadetpanel";
 const CADET_ENROLL_BUTTON_ID = "cadet_enroll";
 const CADET_ENROLL_MODAL_ID = "cadet_enroll_modal";
 
-const CADET_ROLE_IDS = [
-  "1495414411840454676",
-  "1484951746852818944",
-  "1484951786623205516",
-];
+const { CADET_ROLE_IDS } = require("./rank-options");
 
 const RA_REQUEST_CHANNEL_ID = "1501730869961031770";
 const RA_NOTIFICATION_CHANNEL_ID = "1485030495841681408";

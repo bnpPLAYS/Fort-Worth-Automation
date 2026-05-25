@@ -89,12 +89,12 @@ const STAGE_TWO_FIELDS = [
   },
 ];
 
-const RANKS = [
-  { id: "1484975766868594699", label: "Probationary Officer" },
-  { id: "1484950896864530442", label: "Officer One" },
-  { id: "1484950861716263004", label: "Officer Two" },
-  { id: "1484950728647774408", label: "Officer Three" },
-];
+const { RANK_OPTIONS } = require("./rank-options");
+
+const RANKS = RANK_OPTIONS.filter((rank) => !rank.useCadetCallsign).map((rank) => ({
+  id: rank.discordRoleIds[0],
+  label: rank.label,
+}));
 
 const pendingSessions = new Map();
 const applications = new Map();

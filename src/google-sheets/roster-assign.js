@@ -117,10 +117,16 @@ async function clearRosterForName(roleplayName) {
   return existingEntries.length;
 }
 
+async function findRosterEntriesForName(roleplayName) {
+  const { entries } = await getRosterRows();
+  return findEntriesForName(entries, roleplayName);
+}
+
 module.exports = {
   isSheetsConfigured,
   findOpenSlotInRank,
   assignMemberToOpenRank,
   assignCadetCallsign,
   clearRosterForName,
+  findRosterEntriesForName,
 };

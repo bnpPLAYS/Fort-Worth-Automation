@@ -85,6 +85,23 @@ When a valid ride-along request is posted, staff with roles `1484950025472704643
 | **Fast Pass accepted** | Assigns open slot for the selected rank (e.g. Probationary Officer) + department callsign |
 | **Supervisor exam approved** | Moves member from **Lance Corporal** to open **Corporal** slot (`GOOGLE_SUPERVISOR_RANK_NAME`) |
 | **Promotion channel message** | Manual rank move (existing flow) |
+| **`/rosteradd`** (staff) | First-time roster setup: RP name + Discord member + rank → open callsign, nickname, Discord roles |
+
+### `/rosteradd` (staff only)
+
+Staff with roles `1484950025472704643`, `1484950653045440532`, or `1484949625281712281` (or **Manage Server** / **Administrator**) can run:
+
+```
+/rosteradd member:@User roleplay_name:John Smith rank:Probationary Officer
+```
+
+- Formats the name for the sheet (e.g. **J. Smith**)
+- Fails if that RP name is already on the roster
+- Assigns the next open callsign for the chosen rank
+- Sets Discord nickname to `callsign | J. Smith`
+- Assigns the matching Discord rank role(s) (Cadet gets all cadet roles)
+
+Requires open rows on the sheet for the selected rank.
 
 Rank names on the sheet must match Discord role names loosely (e.g. `Probationary Officer`, `LIEUTENANT`).
 - Promotion clears the old **RP NAME** and fills the first open slot in the new rank

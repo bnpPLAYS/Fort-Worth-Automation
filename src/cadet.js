@@ -31,9 +31,13 @@ const CADET_ENROLL_COOLDOWN_TYPE = "cadet-enroll";
 
 const RA_CLAIM_PREFIX = "ra_claim:";
 const RA_START_PREFIX = "ra_start:";
-const RA_PASS_PREFIX = "ra_pass:";
-const RA_FAIL_PREFIX = "ra_fail:";
+const RA_NOTES_PREFIX = "ra_notes:";
+const RA_END_PREFIX = "ra_end:";
+const RA_SCORE_BUTTON_PREFIX = "ra_score_btn:";
+const RA_NOTES_MODAL_PREFIX = "ra_notes_modal:";
+const RA_SCORE_MODAL_PREFIX = "ra_score_modal:";
 const RIDEALONG_DURATION_MS = 30 * 60 * 1000;
+const RIDEALONG_PASSING_SCORE = 7.5;
 
 const CADET_PANEL_COMMAND = "-becomecadetpanel";
 const CADET_ENROLL_BUTTON_ID = "cadet_enroll";
@@ -103,6 +107,15 @@ function buildRideAlongEmbed(request) {
     });
   }
 
+  const noteCount = request.notes?.length ?? 0;
+  if (noteCount > 0) {
+    embed.addFields({ name: "Notes", value: `${noteCount} note(s) recorded`, inline: true });
+  }
+
+  if (request.score != null) {
+    embed.addFields({ name: "Score", value: `${request.score}/10`, inline: true });
+  }
+
   if (request.status === "passed") {
     embed.setTitle("Ride-Along — Passed");
     embed.addFields({ name: "Result", value: `Passed by <@${request.resolvedById}>`, inline: false });
@@ -115,7 +128,11 @@ function buildRideAlongEmbed(request) {
     }
   } else if (request.status === "failed") {
     embed.setTitle("Ride-Along — Failed");
-    embed.addFields({ name: "Result", value: `Failed by <@${request.resolvedById}>`, inline: false });
+    const failReason =
+      request.score != null && request.score < RIDEALONG_PASSING_SCORE
+        ? `Failed by <@${request.resolvedById}> (score **${request.score}/10** — below **${RIDEALONG_PASSING_SCORE}**)`
+        : `Failed by <@${request.resolvedById}>`;
+    embed.addFields({ name: "Result", value: failReason, inline: false });
   }
 
   return embed;
@@ -145,7 +162,7 @@ function scheduleRideAlongEndReminder(client, request) {
       .send({
         content:
           `<@${request.startedById}> It is now time to **end the ride-along**.\n\n` +
-          "Ensure your cadet is fit for our team when you **Pass** or **Fail** them.",
+          "Click **End Ride Along** on the request, review your notes, and submit a score out of 10.",
         allowedMentions: { users: [request.startedById] },
       })
       .catch((error) => {
@@ -154,13 +171,98 @@ function scheduleRideAlongEndReminder(client, request) {
   }, RIDEALONG_DURATION_MS);
 }
 
+function formatRideAlongNotes(request) {
+  if (!request.notes?.length) {
+    return "*No notes recorded yet.*";
+  }
+
+  return request.notes
+    .map((note, index) => {
+      const timestamp = Math.floor(note.at / 1000);
+      return `**${index + 1}.** <t:${timestamp}:t> — ${note.text}`;
+    })
+    .join("\n\n");
+}
+
+function truncateEmbedField(value) {
+  return value.length > 1024 ? `${value.slice(0, 1021)}...` : value;
+}
+
+function parseRideAlongScore(raw) {
+  const score = Number.parseFloat(String(raw).trim().replace(/,/g, "."));
+
+  if (Number.isNaN(score) || score < 1 || score > 10) {
+    throw new Error("Enter a score between **1** and **10** (decimals allowed, e.g. `7.5`).");
+  }
+
+  return Math.round(score * 10) / 10;
+}
+
+function buildRideAlongNotesModal(requestId) {
+  return new ModalBuilder()
+    .setCustomId(`${RA_NOTES_MODAL_PREFIX}${requestId}`)
+    .setTitle("Ride-Along Note")
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("note_text")
+          .setLabel("Note")
+          .setPlaceholder("Document observations about this cadet...")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(1000),
+      ),
+    );
+}
+
+function buildRideAlongScoreModal(requestId) {
+  return new ModalBuilder()
+    .setCustomId(`${RA_SCORE_MODAL_PREFIX}${requestId}`)
+    .setTitle("Ride-Along Score")
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("score")
+          .setLabel("Score out of 10")
+          .setPlaceholder("e.g. 8 or 7.5 — below 7.5 is a fail")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(4),
+      ),
+    );
+}
+
+function buildRideAlongEndReviewPayload(request) {
+  const embed = new EmbedBuilder()
+    .setColor(EMBED_COLOR)
+    .setTitle("End Ride-Along — Review Notes")
+    .setDescription(
+      "Review your notes below, then submit a score out of 10.\n\n" +
+        `**Passing score:** ${RIDEALONG_PASSING_SCORE} or higher`,
+    )
+    .addFields({
+      name: "Your Notes",
+      value: truncateEmbedField(formatRideAlongNotes(request)),
+      inline: false,
+    });
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${RA_SCORE_BUTTON_PREFIX}${request.requestId}`)
+      .setLabel("Submit Score")
+      .setStyle(ButtonStyle.Primary),
+  );
+
+  return { embeds: [embed], components: [row] };
+}
+
 function buildRideAlongButtons(request) {
   if (request.status === "passed" || request.status === "failed") {
     return [];
   }
 
   const canStart = Boolean(request.claimedById) && !request.startedById;
-  const canPassFail = Boolean(request.claimedById) && Boolean(request.startedById);
+  const inProgress = Boolean(request.startedById) && request.status === "pending";
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -174,18 +276,130 @@ function buildRideAlongButtons(request) {
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(!canStart),
     new ButtonBuilder()
-      .setCustomId(`${RA_PASS_PREFIX}${request.requestId}`)
-      .setLabel("Pass")
-      .setStyle(ButtonStyle.Success)
-      .setDisabled(!canPassFail),
+      .setCustomId(`${RA_NOTES_PREFIX}${request.requestId}`)
+      .setLabel("Notes")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(!inProgress),
     new ButtonBuilder()
-      .setCustomId(`${RA_FAIL_PREFIX}${request.requestId}`)
-      .setLabel("Fail")
+      .setCustomId(`${RA_END_PREFIX}${request.requestId}`)
+      .setLabel("End Ride Along")
       .setStyle(ButtonStyle.Danger)
-      .setDisabled(!canPassFail),
+      .setDisabled(!inProgress),
   );
 
   return [row];
+}
+
+async function executeRideAlongPass(interaction, request, applicant, score) {
+  if (!isSheetsConfigured()) {
+    await interaction.editReply(
+      "Cannot pass ride-along — Google Sheets is not configured on the bot.",
+    );
+    return;
+  }
+
+  const roleplayName = await resolveRoleplayNameForMember(
+    applicant,
+    request.roleplayName || getRoleplayNameFromMember(applicant),
+  );
+
+  if (!roleplayName) {
+    await interaction.editReply(
+      "Could not determine this member's roster name. They need their RP name in their nickname (e.g. `C-3 | J. Smith`) or a row on the cadet section of the sheet.",
+    );
+    return;
+  }
+
+  let rosterResult;
+  try {
+    rosterResult = await promoteToProbationaryOnRoster(roleplayName);
+  } catch (error) {
+    console.error("Ride-along pass roster assignment failed:", error);
+    await interaction.editReply(
+      `Could not pass ride-along — roster update failed.\n\n${error.message}\n\n` +
+        "Add open **Probationary Officer** rows on the sheet (4-digit callsign, empty RP NAME), then try again.",
+    );
+    return;
+  }
+
+  await applicant.roles.remove(CADET_ROLE_IDS).catch((error) => {
+    console.error("Failed to remove cadet roles on pass:", error);
+  });
+  await applicant.roles.add(PROBATIONARY_OFFICER_ROLE_ID).catch((error) => {
+    console.error("Failed to assign probationary officer role:", error);
+  });
+  await assignMemberRosterRoles(applicant, "Ride-along pass");
+
+  const nicknameResult = await updateMemberCallsign(
+    applicant,
+    rosterResult.newCallsign,
+    roleplayName,
+  );
+
+  request.status = "passed";
+  request.resolvedById = interaction.user.id;
+  request.rosterCallsign = rosterResult.newCallsign;
+  request.rosterRank = rosterResult.newRank;
+  request.roleplayName = roleplayName;
+  clearRideAlongEndReminder(request);
+  await updateRideAlongNotification(interaction.client, request);
+
+  let staffNote =
+    `**Passed** with a score of **${score}/10**.\n` +
+    `Moved **${roleplayName}** from **${rosterResult.previousCallsign ?? "cadet"}** to **${rosterResult.newCallsign}** (${rosterResult.newRank}).`;
+
+  if (!nicknameResult.ok) {
+    staffNote += `\nNickname not updated: ${nicknameResult.reason}`;
+  } else if (nicknameResult.changed) {
+    staffNote += `\nNickname: \`${nicknameResult.nickname}\`.`;
+  }
+
+  await sendCallsignDm(applicant.user, {
+    callsign: rosterResult.newCallsign,
+    roleplayName,
+    rank: rosterResult.newRank,
+    title:
+      `Your ride-along has been marked **Passed** (score: **${score}/10**).\n\n` +
+      "You have been promoted to **Probationary Officer**.",
+    extraLines:
+      nicknameResult.ok && nicknameResult.changed
+        ? [`Your Discord nickname is now \`${nicknameResult.nickname}\`.`]
+        : [],
+  });
+
+  await interaction.editReply(`Marked **Passed** for ${applicant}.\n${staffNote}`);
+}
+
+async function executeRideAlongFail(interaction, request, applicant, score) {
+  await applicant.roles.remove(CADET_ROLE_IDS).catch((error) => {
+    console.error("Failed to remove cadet roles on fail:", error);
+  });
+  setCooldown(applicant.id, CADET_ENROLL_COOLDOWN_MS, CADET_ENROLL_COOLDOWN_TYPE);
+
+  if (isSheetsConfigured()) {
+    try {
+      await clearRosterForName(getRoleplayNameFromMember(applicant));
+    } catch (error) {
+      console.error("Ride-along fail roster clear failed:", error);
+    }
+  }
+
+  request.status = "failed";
+  request.resolvedById = interaction.user.id;
+  clearRideAlongEndReminder(request);
+  await updateRideAlongNotification(interaction.client, request);
+
+  await applicant.user
+    .send(
+      `Your ride-along has been marked **Failed** (score: **${score}/10**).\n\n` +
+        "Your cadet roles were removed. You may try again in **3 days** using **Become Cadet**.",
+    )
+    .catch(() => null);
+
+  await interaction.editReply(
+    `Marked **Failed** for ${applicant} (score **${score}/10** — below **${RIDEALONG_PASSING_SCORE}**).\n` +
+      "They cannot re-enroll as cadet for 3 days.",
+  );
 }
 
 function buildCadetPanelEmbed() {
@@ -481,6 +695,8 @@ async function submitRideAlongRequest(client, { guild, member, robloxUser, disco
     startedById: null,
     startedAt: null,
     endReminderTimeout: null,
+    notes: [],
+    score: null,
     resolvedById: null,
   };
 
@@ -617,8 +833,131 @@ async function updateRideAlongNotification(client, request) {
   });
 }
 
+function getRideAlongRequestIdFromCustomId(prefix, customId) {
+  return customId.slice(prefix.length);
+}
+
 async function handleRideAlongInteraction(interaction) {
-  if (!interaction.isButton()) return false;
+  if (interaction.isModalSubmit()) {
+    if (interaction.customId.startsWith(RA_NOTES_MODAL_PREFIX)) {
+      const requestId = getRideAlongRequestIdFromCustomId(RA_NOTES_MODAL_PREFIX, interaction.customId);
+      const request = getRideAlongRequest(requestId);
+
+      if (!request || request.status === "passed" || request.status === "failed") {
+        await interaction.reply({ content: "This ride-along is no longer active.", ephemeral: true });
+        return true;
+      }
+
+      if (request.claimedById !== interaction.user.id) {
+        await interaction.reply({
+          content: "Only the staff member who claimed this ride-along can add notes.",
+          ephemeral: true,
+        });
+        return true;
+      }
+
+      if (!request.startedById) {
+        await interaction.reply({
+          content: "Start the ride-along before adding notes.",
+          ephemeral: true,
+        });
+        return true;
+      }
+
+      const noteText = interaction.fields.getTextInputValue("note_text").trim();
+      if (!noteText) {
+        await interaction.reply({ content: "Note cannot be empty.", ephemeral: true });
+        return true;
+      }
+
+      if (!request.notes) request.notes = [];
+      request.notes.push({
+        text: noteText,
+        at: Date.now(),
+        authorId: interaction.user.id,
+      });
+
+      await updateRideAlongNotification(interaction.client, request);
+      await interaction.reply({
+        content: `Note **#${request.notes.length}** saved. You have **${request.notes.length}** note(s) on this ride-along.`,
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    if (interaction.customId.startsWith(RA_SCORE_MODAL_PREFIX)) {
+      const requestId = getRideAlongRequestIdFromCustomId(RA_SCORE_MODAL_PREFIX, interaction.customId);
+      const request = getRideAlongRequest(requestId);
+
+      if (!request || request.status === "passed" || request.status === "failed") {
+        await interaction.reply({ content: "This ride-along is no longer active.", ephemeral: true });
+        return true;
+      }
+
+      if (request.claimedById !== interaction.user.id) {
+        await interaction.reply({
+          content: "Only the staff member who claimed this ride-along can submit a score.",
+          ephemeral: true,
+        });
+        return true;
+      }
+
+      let score;
+      try {
+        score = parseRideAlongScore(interaction.fields.getTextInputValue("score"));
+      } catch (error) {
+        await interaction.reply({ content: error.message, ephemeral: true });
+        return true;
+      }
+
+      request.score = score;
+
+      await interaction.deferReply({ ephemeral: true });
+
+      const guild = await interaction.client.guilds.fetch(request.guildId).catch(() => null);
+      const applicant = await guild?.members.fetch(request.applicantId).catch(() => null);
+
+      if (!applicant) {
+        await interaction.editReply("Could not find the applicant in this server.");
+        return true;
+      }
+
+      if (score < RIDEALONG_PASSING_SCORE) {
+        await executeRideAlongFail(interaction, request, applicant, score);
+      } else {
+        await executeRideAlongPass(interaction, request, applicant, score);
+      }
+
+      return true;
+    }
+
+    return false;
+  }
+
+  if (!interaction.isButton()) {
+    return false;
+  }
+
+  if (interaction.customId.startsWith(RA_SCORE_BUTTON_PREFIX)) {
+    const requestId = getRideAlongRequestIdFromCustomId(RA_SCORE_BUTTON_PREFIX, interaction.customId);
+    const request = getRideAlongRequest(requestId);
+
+    if (!request || request.status === "passed" || request.status === "failed") {
+      await interaction.reply({ content: "This ride-along is no longer active.", ephemeral: true });
+      return true;
+    }
+
+    if (request.claimedById !== interaction.user.id) {
+      await interaction.reply({
+        content: "Only the staff member who claimed this ride-along can submit a score.",
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    await interaction.showModal(buildRideAlongScoreModal(requestId));
+    return true;
+  }
 
   let action = null;
   let requestId = null;
@@ -629,12 +968,12 @@ async function handleRideAlongInteraction(interaction) {
   } else if (interaction.customId.startsWith(RA_START_PREFIX)) {
     action = "start";
     requestId = interaction.customId.slice(RA_START_PREFIX.length);
-  } else if (interaction.customId.startsWith(RA_PASS_PREFIX)) {
-    action = "pass";
-    requestId = interaction.customId.slice(RA_PASS_PREFIX.length);
-  } else if (interaction.customId.startsWith(RA_FAIL_PREFIX)) {
-    action = "fail";
-    requestId = interaction.customId.slice(RA_FAIL_PREFIX.length);
+  } else if (interaction.customId.startsWith(RA_NOTES_PREFIX)) {
+    action = "notes";
+    requestId = interaction.customId.slice(RA_NOTES_PREFIX.length);
+  } else if (interaction.customId.startsWith(RA_END_PREFIX)) {
+    action = "end";
+    requestId = interaction.customId.slice(RA_END_PREFIX.length);
   } else {
     return false;
   }
@@ -658,6 +997,53 @@ async function handleRideAlongInteraction(interaction) {
 
   if (request.status === "passed" || request.status === "failed") {
     await interaction.reply({ content: "This ride-along has already been resolved.", ephemeral: true });
+    return true;
+  }
+
+  if (action === "notes") {
+    if (request.claimedById !== interaction.user.id) {
+      await interaction.reply({
+        content: "Only the staff member who claimed this ride-along can add notes.",
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    if (!request.startedById) {
+      await interaction.reply({
+        content: "Start the ride-along before adding notes.",
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    await interaction.showModal(buildRideAlongNotesModal(requestId));
+    return true;
+  }
+
+  if (action === "end") {
+    if (request.claimedById !== interaction.user.id) {
+      await interaction.reply({
+        content: "Only the staff member who claimed this ride-along can end it.",
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    if (!request.startedById) {
+      await interaction.reply({
+        content: "Start the ride-along before ending it.",
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    clearRideAlongEndReminder(request);
+
+    await interaction.reply({
+      ...buildRideAlongEndReviewPayload(request),
+      ephemeral: true,
+    });
     return true;
   }
 
@@ -731,6 +1117,7 @@ async function handleRideAlongInteraction(interaction) {
 
     request.startedById = interaction.user.id;
     request.startedAt = Date.now();
+    if (!request.notes) request.notes = [];
     scheduleRideAlongEndReminder(interaction.client, request);
     await updateRideAlongNotification(interaction.client, request);
 
@@ -738,142 +1125,14 @@ async function handleRideAlongInteraction(interaction) {
       content:
         "**Ride-along started.**\n\n" +
         "Remember to **supervise your cadet at all times** and ensure they meet our standards.\n\n" +
-        "You will be pinged here in **30 minutes** when it is time to end the ride-along and **Pass** or **Fail** your cadet.",
+        "Use **Notes** during the ride-along, then click **End Ride Along** when finished to review notes and submit a score.\n\n" +
+        "You will be pinged here in **30 minutes** as a reminder to end the ride-along.",
       ephemeral: true,
     });
     return true;
   }
 
-  if (request.claimedById !== interaction.user.id) {
-    await interaction.reply({
-      content: "Only the staff member who claimed this ride-along can pass or fail it.",
-      ephemeral: true,
-    });
-    return true;
-  }
-
-  if (!request.startedById) {
-    await interaction.reply({
-      content: "Click **Start Ride Along** before you can pass or fail this cadet.",
-      ephemeral: true,
-    });
-    return true;
-  }
-
-  await interaction.deferReply({ ephemeral: true });
-
-  const guild = await interaction.client.guilds.fetch(request.guildId).catch(() => null);
-  const applicant = await guild?.members.fetch(request.applicantId).catch(() => null);
-
-  if (!applicant) {
-    await interaction.editReply("Could not find the applicant in this server.");
-    return true;
-  }
-
-  if (action === "pass") {
-    if (!isSheetsConfigured()) {
-      await interaction.editReply(
-        "Cannot pass ride-along — Google Sheets is not configured on the bot.",
-      );
-      return true;
-    }
-
-    const roleplayName = await resolveRoleplayNameForMember(
-      applicant,
-      request.roleplayName || getRoleplayNameFromMember(applicant),
-    );
-
-    if (!roleplayName) {
-      await interaction.editReply(
-        "Could not determine this member's roster name. They need their RP name in their nickname (e.g. `C-3 | J. Smith`) or a row on the cadet section of the sheet.",
-      );
-      return true;
-    }
-
-    let rosterResult;
-    try {
-      rosterResult = await promoteToProbationaryOnRoster(roleplayName);
-    } catch (error) {
-      console.error("Ride-along pass roster assignment failed:", error);
-      await interaction.editReply(
-        `Could not pass ride-along — roster update failed.\n\n${error.message}\n\n` +
-          "Add open **Probationary Officer** rows on the sheet (4-digit callsign, empty RP NAME), then try again.",
-      );
-      return true;
-    }
-
-    await applicant.roles.remove(CADET_ROLE_IDS).catch((error) => {
-      console.error("Failed to remove cadet roles on pass:", error);
-    });
-    await applicant.roles.add(PROBATIONARY_OFFICER_ROLE_ID).catch((error) => {
-      console.error("Failed to assign probationary officer role:", error);
-    });
-    await assignMemberRosterRoles(applicant, "Ride-along pass");
-
-    const nicknameResult = await updateMemberCallsign(
-      applicant,
-      rosterResult.newCallsign,
-      roleplayName,
-    );
-
-    request.status = "passed";
-    request.resolvedById = interaction.user.id;
-    request.rosterCallsign = rosterResult.newCallsign;
-    request.rosterRank = rosterResult.newRank;
-    request.roleplayName = roleplayName;
-    clearRideAlongEndReminder(request);
-    await updateRideAlongNotification(interaction.client, request);
-
-    let staffNote = `Moved **${roleplayName}** from **${rosterResult.previousCallsign ?? "cadet"}** to **${rosterResult.newCallsign}** (${rosterResult.newRank}).`;
-    if (!nicknameResult.ok) {
-      staffNote += ` Nickname not updated: ${nicknameResult.reason}`;
-    } else if (nicknameResult.changed) {
-      staffNote += ` Nickname: \`${nicknameResult.nickname}\`.`;
-    }
-
-    await sendCallsignDm(applicant.user, {
-      callsign: rosterResult.newCallsign,
-      roleplayName,
-      rank: rosterResult.newRank,
-      title:
-        "Your ride-along has been marked **Passed**.\n\nYou have been promoted to **Probationary Officer**.",
-      extraLines:
-        nicknameResult.ok && nicknameResult.changed
-          ? [`Your Discord nickname is now \`${nicknameResult.nickname}\`.`]
-          : [],
-    });
-
-    await interaction.editReply(`Marked **Passed** for ${applicant}.\n${staffNote}`);
-    return true;
-  }
-
-  await applicant.roles.remove(CADET_ROLE_IDS).catch((error) => {
-    console.error("Failed to remove cadet roles on fail:", error);
-  });
-  setCooldown(applicant.id, CADET_ENROLL_COOLDOWN_MS, CADET_ENROLL_COOLDOWN_TYPE);
-
-  if (isSheetsConfigured()) {
-    try {
-      await clearRosterForName(getRoleplayNameFromMember(applicant));
-    } catch (error) {
-      console.error("Ride-along fail roster clear failed:", error);
-    }
-  }
-
-  request.status = "failed";
-  request.resolvedById = interaction.user.id;
-  clearRideAlongEndReminder(request);
-  await updateRideAlongNotification(interaction.client, request);
-
-  await applicant.user
-    .send(
-      "Your ride-along has been marked **Failed**.\n\n" +
-        "Your cadet roles were removed. You may try again in **3 days** using **Become Cadet**.",
-    )
-    .catch(() => null);
-
-  await interaction.editReply(`Marked **Failed** for ${applicant}. They cannot re-enroll as cadet for 3 days.`);
-  return true;
+  return false;
 }
 
 module.exports = {

@@ -114,6 +114,16 @@ Runs two steps:
 
 Use after bulk callsign changes or when ride-along passes could not move people because no PO slots were open.
 
+### `/sync-promotions` (role `1484949249245315302`)
+
+Run **after Discord promotions** (rank roles updated). For every member with role `1484951746852818944`:
+
+1. Reads their **highest matching rank** from Discord role names (compared to ranks on the sheet, top-to-bottom).
+2. If that rank differs from their row on the Google roster, clears their old row and assigns the next open **callsign** in the new rank.
+3. Updates their Discord nickname and **DMs** them if their callsign changed.
+
+Requires open roster slots for any new ranks. Rank names on Discord roles must loosely match the sheet (e.g. `FWPD | Lieutenant` matches `LIEUTENANT`).
+
 ### Member roster roles
 
 When someone is added via **Become Cadet**, **Fast Pass accept**, **ride-along pass**, or **`/rosteradd`**, the bot assigns roles `1484951746852818944` and `1498375617455067387` and DMs their callsign when assigned.

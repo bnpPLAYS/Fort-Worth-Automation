@@ -14,6 +14,8 @@ module.exports = {
     "1484949625281712281",
   ],
   REFRESH_CALLSIGN_ROLE_ID: "1484949625281712281",
+  /** Run /sync-promotions after Discord rank changes to update the Google roster */
+  PROMOTION_SYNC_ROLE_ID: "1484949249245315302",
   /** Members with this role are synced from the sheet by /refresh-callsign */
   ROSTER_SYNC_ROLE_ID: "1484951746852818944",
   /** Always assigned when added to the roster (cadet, Fast Pass, ride-along pass, etc.) */

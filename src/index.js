@@ -23,6 +23,7 @@ const {
   handleRosterAddAutocomplete,
 } = require("./roster-add");
 const { buildRefreshCallsignCommand, handleRefreshCallsignCommand } = require("./refresh-callsign");
+const { buildSyncPromotionsCommand, handleSyncPromotionsCommand } = require("./sync-promotions");
 const {
   handleSupportPanelCommand,
   handleStaffPanelCommand,
@@ -70,6 +71,7 @@ const commands = [
     ),
   buildRosterAddCommand(),
   buildRefreshCallsignCommand(),
+  buildSyncPromotionsCommand(),
 ].map((command) => command.toJSON());
 
 async function registerCommands() {
@@ -136,6 +138,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
 
     handled = await handleRefreshCallsignCommand(interaction);
+    if (handled) return;
+
+    handled = await handleSyncPromotionsCommand(interaction);
     if (handled) return;
 
     if (interaction.isChatInputCommand() && interaction.commandName === "ping") {

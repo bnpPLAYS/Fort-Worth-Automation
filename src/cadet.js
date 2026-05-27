@@ -30,8 +30,10 @@ const RA_COOLDOWN_TYPE = "ride-along";
 const CADET_ENROLL_COOLDOWN_TYPE = "cadet-enroll";
 
 const RA_CLAIM_PREFIX = "ra_claim:";
+const RA_START_PREFIX = "ra_start:";
 const RA_PASS_PREFIX = "ra_pass:";
 const RA_FAIL_PREFIX = "ra_fail:";
+const RIDEALONG_DURATION_MS = 30 * 60 * 1000;
 
 const CADET_PANEL_COMMAND = "-becomecadetpanel";
 const CADET_ENROLL_BUTTON_ID = "cadet_enroll";
@@ -92,6 +94,14 @@ function buildRideAlongEmbed(request) {
     });
   }
 
+  if (request.startedById) {
+    embed.addFields({
+      name: "Ride-Along Started",
+      value: `<@${request.startedById}>`,
+      inline: true,
+    });
+  }
+
   if (request.status === "passed") {
     embed.setTitle("Ride-Along — Passed");
     embed.addFields({ name: "Result", value: `Passed by <@${request.resolvedById}>`, inline: false });
@@ -110,10 +120,46 @@ function buildRideAlongEmbed(request) {
   return embed;
 }
 
+function clearRideAlongEndReminder(request) {
+  if (request.endReminderTimeout) {
+    clearTimeout(request.endReminderTimeout);
+    request.endReminderTimeout = null;
+  }
+}
+
+function scheduleRideAlongEndReminder(client, request) {
+  clearRideAlongEndReminder(request);
+
+  request.endReminderTimeout = setTimeout(async () => {
+    request.endReminderTimeout = null;
+
+    if (request.status === "passed" || request.status === "failed" || !request.startedById) {
+      return;
+    }
+
+    const channel = await client.channels.fetch(request.notificationChannelId).catch(() => null);
+    if (!channel?.isTextBased()) return;
+
+    await channel
+      .send({
+        content:
+          `<@${request.startedById}> It is now time to **end the ride-along**.\n\n` +
+          "Ensure your cadet is fit for our team when you **Pass** or **Fail** them.",
+        allowedMentions: { users: [request.startedById] },
+      })
+      .catch((error) => {
+        console.error("Failed to send ride-along end reminder:", error);
+      });
+  }, RIDEALONG_DURATION_MS);
+}
+
 function buildRideAlongButtons(request) {
   if (request.status === "passed" || request.status === "failed") {
     return [];
   }
+
+  const canStart = Boolean(request.claimedById) && !request.startedById;
+  const canPassFail = Boolean(request.claimedById) && Boolean(request.startedById);
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -122,15 +168,20 @@ function buildRideAlongButtons(request) {
       .setStyle(ButtonStyle.Primary)
       .setDisabled(Boolean(request.claimedById)),
     new ButtonBuilder()
+      .setCustomId(`${RA_START_PREFIX}${request.requestId}`)
+      .setLabel(request.startedById ? "Started" : "Start Ride Along")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(!canStart),
+    new ButtonBuilder()
       .setCustomId(`${RA_PASS_PREFIX}${request.requestId}`)
       .setLabel("Pass")
       .setStyle(ButtonStyle.Success)
-      .setDisabled(!request.claimedById),
+      .setDisabled(!canPassFail),
     new ButtonBuilder()
       .setCustomId(`${RA_FAIL_PREFIX}${request.requestId}`)
       .setLabel("Fail")
       .setStyle(ButtonStyle.Danger)
-      .setDisabled(!request.claimedById),
+      .setDisabled(!canPassFail),
   );
 
   return [row];
@@ -426,6 +477,9 @@ async function submitRideAlongRequest(client, { guild, member, robloxUser, disco
     availableFor,
     status: "pending",
     claimedById: null,
+    startedById: null,
+    startedAt: null,
+    endReminderTimeout: null,
     resolvedById: null,
   };
 
@@ -571,6 +625,9 @@ async function handleRideAlongInteraction(interaction) {
   if (interaction.customId.startsWith(RA_CLAIM_PREFIX)) {
     action = "claim";
     requestId = interaction.customId.slice(RA_CLAIM_PREFIX.length);
+  } else if (interaction.customId.startsWith(RA_START_PREFIX)) {
+    action = "start";
+    requestId = interaction.customId.slice(RA_START_PREFIX.length);
   } else if (interaction.customId.startsWith(RA_PASS_PREFIX)) {
     action = "pass";
     requestId = interaction.customId.slice(RA_PASS_PREFIX.length);
@@ -648,13 +705,55 @@ async function handleRideAlongInteraction(interaction) {
       }
     }
 
-    await interaction.reply({ content: "You claimed this ride-along. The applicant has been notified.", ephemeral: true });
+    await interaction.reply({
+      content:
+        "You claimed this ride-along. The applicant has been notified.\n\n" +
+        "Click **Start Ride Along** when you begin supervising them.",
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  if (action === "start") {
+    if (request.claimedById !== interaction.user.id) {
+      await interaction.reply({
+        content: "Only the staff member who claimed this ride-along can start it.",
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    if (request.startedById) {
+      await interaction.reply({ content: "This ride-along has already been started.", ephemeral: true });
+      return true;
+    }
+
+    request.startedById = interaction.user.id;
+    request.startedAt = Date.now();
+    scheduleRideAlongEndReminder(interaction.client, request);
+    await updateRideAlongNotification(interaction.client, request);
+
+    await interaction.reply({
+      content:
+        "**Ride-along started.**\n\n" +
+        "Remember to **supervise your cadet at all times** and ensure they meet our standards.\n\n" +
+        "You will be pinged here in **30 minutes** when it is time to end the ride-along and **Pass** or **Fail** your cadet.",
+      ephemeral: true,
+    });
     return true;
   }
 
   if (request.claimedById !== interaction.user.id) {
     await interaction.reply({
       content: "Only the staff member who claimed this ride-along can pass or fail it.",
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  if (!request.startedById) {
+    await interaction.reply({
+      content: "Click **Start Ride Along** before you can pass or fail this cadet.",
       ephemeral: true,
     });
     return true;
@@ -721,6 +820,7 @@ async function handleRideAlongInteraction(interaction) {
     request.rosterCallsign = rosterResult.newCallsign;
     request.rosterRank = rosterResult.newRank;
     request.roleplayName = roleplayName;
+    clearRideAlongEndReminder(request);
     await updateRideAlongNotification(interaction.client, request);
 
     let staffNote = `Moved **${roleplayName}** from **${rosterResult.previousCallsign ?? "cadet"}** to **${rosterResult.newCallsign}** (${rosterResult.newRank}).`;
@@ -761,6 +861,7 @@ async function handleRideAlongInteraction(interaction) {
 
   request.status = "failed";
   request.resolvedById = interaction.user.id;
+  clearRideAlongEndReminder(request);
   await updateRideAlongNotification(interaction.client, request);
 
   await applicant.user

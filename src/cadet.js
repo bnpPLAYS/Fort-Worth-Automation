@@ -47,9 +47,10 @@ const RIDEALONG_MODAL_ID = "ridealong_modal";
 
 const { CADET_ROLE_IDS } = require("./rank-options");
 
-const RA_CHANNEL_ID = "1509320569852661891";
-const RA_REQUEST_CHANNEL_ID = RA_CHANNEL_ID;
-const RA_NOTIFICATION_CHANNEL_ID = RA_CHANNEL_ID;
+/** Cadets use /ridealong here; request posts appear in this channel */
+const RA_REQUEST_CHANNEL_ID = "1501730869961031770";
+/** Staff Claim / Start / Notes / End buttons and pings */
+const RA_NOTIFICATION_CHANNEL_ID = "1509320569852661891";
 const RA_PING_ROLE_IDS = RA_STAFF_ROLE_IDS;
 
 const rideAlongRequests = new Map();

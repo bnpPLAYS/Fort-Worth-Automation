@@ -200,6 +200,9 @@ function buildCadetEnrollModal() {
 }
 
 async function handleCadetInteraction(interaction) {
+  const rideAlongHandled = await handleRideAlongCommand(interaction);
+  if (rideAlongHandled) return true;
+
   if (interaction.isButton() && interaction.customId === CADET_ENROLL_BUTTON_ID) {
     const member = interaction.member;
     if (!member) {

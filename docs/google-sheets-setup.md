@@ -75,9 +75,8 @@ Cadets request ride-alongs with **`/ridealong`** in the ride-along request chann
 
 1. **Claim** — take charge of the ride-along; pings the applicant with station instructions (blocky avatar, no unrealistic accessories)
 2. **Start Ride Along** — only the claimer; shows a reminder to supervise the cadet at all times and meet standards; pings the claimer after **30 minutes** to end the ride-along
-3. **Pass** / **Fail** — only after the ride-along has been started
-2. **Pass** — clears cadet row on the sheet, assigns open **Probationary Officer** callsign, updates Discord nickname, and gives the Probationary Officer role
-3. **Fail** — removes cadet roles, clears their cadet roster row, **3-day cooldown** before they can click **Become Cadet** again
+3. **Pass** — only after start; clears cadet row, assigns open **Probationary Officer** callsign, updates nickname, gives PO role
+4. **Fail** — only after start; removes cadet roles, clears cadet roster row, **3-day cooldown** before **Become Cadet** again
 
 ### Automatic roster updates
 

@@ -107,12 +107,12 @@ Requires open rows on the sheet for the selected rank.
 
 ### `/refresh-callsign` (role `1484949625281712281`)
 
-Syncs every member with role `1484951746852818944` against the Google roster:
+Runs two steps:
 
-- Updates Discord nickname to match sheet **callsign** and **RP name**
-- DMs each member their callsign from the sheet
+1. **Probationary Officer roster fix** — anyone with the PO Discord role who is still on a **cadet** row (or not on a PO row) is moved to the next open **Probationary Officer** slot on the sheet (clears their old cadet row).
+2. **Callsign sync** — members with role `1484951746852818944` get nicknames updated from the sheet. **DMs are sent only** if their callsign or nickname actually changed.
 
-Use after bulk callsign changes on the spreadsheet. Members must have their RP name in their nickname (e.g. `3005 | J. Smith`) or a matching callsign for the bot to find their row.
+Use after bulk callsign changes or when ride-along passes could not move people because no PO slots were open.
 
 ### Member roster roles
 

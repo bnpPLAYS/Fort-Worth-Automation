@@ -29,7 +29,12 @@ function isCadetSheetRank(rankName) {
   return ranksMatch(getCadetRankName(), rankName);
 }
 
+function isCadetRosterEntry(entry) {
+  return isCadetSheetRank(entry.rank) || /^C-\d{1,3}$/i.test(String(entry.callsign).trim());
+}
+
 module.exports = {
   getRosterRanksWithOpenSlots,
   isCadetSheetRank,
+  isCadetRosterEntry,
 };

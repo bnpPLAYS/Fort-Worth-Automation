@@ -16,11 +16,13 @@ const { assignMemberRosterRoles, sendCallsignDm } = require("./member-roster");
 const { formatRoleplayInitials } = require("./roleplay-name");
 const {
   isSheetsConfigured,
-  assignMemberToOpenRank,
   assignCadetCallsign,
   clearRosterForName,
 } = require("./google-sheets/roster-assign");
-const { getProbationaryRankName } = require("./google-sheets/client");
+const {
+  resolveRoleplayNameForMember,
+  promoteToProbationaryOnRoster,
+} = require("./google-sheets/roster-sync");
 
 const RA_COOLDOWN_MS = 15 * 60 * 1000;
 const RA_COOLDOWN_TYPE = "ride-along";
@@ -496,9 +498,6 @@ async function handleRideAlongInteraction(interaction) {
   }
 
   if (action === "pass") {
-    const roleplayName = request.roleplayName || getRoleplayNameFromMember(applicant);
-    const probationaryRank = getProbationaryRankName();
-
     if (!isSheetsConfigured()) {
       await interaction.editReply(
         "Cannot pass ride-along — Google Sheets is not configured on the bot.",
@@ -506,9 +505,21 @@ async function handleRideAlongInteraction(interaction) {
       return true;
     }
 
+    const roleplayName = await resolveRoleplayNameForMember(
+      applicant,
+      request.roleplayName || getRoleplayNameFromMember(applicant),
+    );
+
+    if (!roleplayName) {
+      await interaction.editReply(
+        "Could not determine this member's roster name. They need their RP name in their nickname (e.g. `C-3 | J. Smith`) or a row on the cadet section of the sheet.",
+      );
+      return true;
+    }
+
     let rosterResult;
     try {
-      rosterResult = await assignMemberToOpenRank(roleplayName, probationaryRank);
+      rosterResult = await promoteToProbationaryOnRoster(roleplayName);
     } catch (error) {
       console.error("Ride-along pass roster assignment failed:", error);
       await interaction.editReply(

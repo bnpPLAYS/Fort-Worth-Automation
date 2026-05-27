@@ -1,9 +1,10 @@
 const { EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder } = require("discord.js");
 const { EMBED_COLOR, REFRESH_CALLSIGN_ROLE_ID, ROSTER_SYNC_ROLE_ID } = require("./constants");
 const { isSheetsConfigured, getSheetsConfigHelpMessage } = require("./google-sheets/client");
-const { getNamedRosterEntries, findRosterEntryForMember } = require("./google-sheets/roster-lookup");
-const { updateMemberCallsign, formatCallsignForDisplay } = require("./discord-callsign");
-const { sendCallsignDm } = require("./member-roster");
+const {
+  fixProbationaryRosterForGuild,
+  refreshCallsignsForGuild,
+} = require("./google-sheets/roster-sync");
 
 const COMMAND_NAME = "refresh-callsign";
 
@@ -22,7 +23,7 @@ function buildRefreshCallsignCommand() {
   return new SlashCommandBuilder()
     .setName(COMMAND_NAME)
     .setDescription(
-      "Sync nicknames from the Google roster for all members with the roster sync role",
+      "Move PO members off cadet rows, sync nicknames from the sheet, and DM anyone whose callsign changed",
     );
 }
 
@@ -54,101 +55,71 @@ async function handleRefreshCallsignCommand(interaction) {
 
   await interaction.deferReply({ ephemeral: true });
 
-  const guild = interaction.guild;
-
   try {
-    const entries = await getNamedRosterEntries();
-    await guild.members.fetch().catch(() => null);
-
-    const membersToSync = guild.members.cache.filter((member) =>
-      member.roles.cache.has(ROSTER_SYNC_ROLE_ID),
-    );
-
-    const updated = [];
-    const unchanged = [];
-    const notOnSheet = [];
-    const failed = [];
-
-    for (const member of membersToSync.values()) {
-      const entry = findRosterEntryForMember(entries, member);
-
-      if (!entry) {
-        notOnSheet.push(member.displayName);
-        continue;
-      }
-
-      const callsign = formatCallsignForDisplay(entry.callsign);
-      const nicknameResult = await updateMemberCallsign(member, callsign, entry.name);
-
-      if (!nicknameResult.ok) {
-        failed.push(`${member.displayName}: ${nicknameResult.reason}`);
-        continue;
-      }
-
-      const dmSent = await sendCallsignDm(member.user, {
-        callsign,
-        roleplayName: entry.name,
-        rank: entry.rank,
-        isCadet: /^C-/i.test(callsign),
-        title: "Your callsign has been synced from the department roster.",
-        extraLines:
-          nicknameResult.changed && nicknameResult.nickname
-            ? [`Your Discord nickname is now \`${nicknameResult.nickname}\`.`]
-            : [],
-      });
-
-      const label = `${member.displayName} → **${callsign}** | ${entry.name}`;
-      if (nicknameResult.changed || dmSent) {
-        updated.push(`${label}${dmSent ? "" : " (DM failed)"}`);
-      } else {
-        unchanged.push(label);
-      }
-    }
+    const poFix = await fixProbationaryRosterForGuild(interaction.guild);
+    const callsignRefresh = await refreshCallsignsForGuild(interaction.guild);
 
     const embed = new EmbedBuilder()
       .setColor(EMBED_COLOR)
-      .setTitle("Callsign refresh complete")
+      .setTitle("Roster sync complete")
       .setDescription(
-        `Checked **${membersToSync.size}** member(s) with <@&${ROSTER_SYNC_ROLE_ID}> against the Google roster.`,
+        "Moved Probationary Officers still on cadet rows, then synced nicknames for members with the roster role. " +
+          "DMs were sent only to members whose callsign or nickname changed.",
       )
       .addFields(
         {
-          name: `Updated (${updated.length})`,
-          value: updated.length > 0 ? updated.slice(0, 15).join("\n") : "None",
-          inline: false,
-        },
-        {
-          name: `Already correct (${unchanged.length})`,
-          value: unchanged.length > 0 ? unchanged.slice(0, 10).join("\n") : "None",
-          inline: false,
-        },
-        {
-          name: `Not found on sheet (${notOnSheet.length})`,
+          name: `PO roster moves (${poFix.moved.length})`,
           value:
-            notOnSheet.length > 0
-              ? notOnSheet.slice(0, 10).join("\n") +
-                (notOnSheet.length > 10 ? `\n…and ${notOnSheet.length - 10} more` : "")
+            poFix.moved.length > 0
+              ? poFix.moved.slice(0, 12).join("\n")
+              : `None (${poFix.checked} PO role member(s) checked)`,
+          inline: false,
+        },
+        {
+          name: `Callsign updates (${callsignRefresh.updated.length})`,
+          value:
+            callsignRefresh.updated.length > 0
+              ? callsignRefresh.updated.slice(0, 12).join("\n")
+              : `None (${callsignRefresh.checked} member(s) with <@&${ROSTER_SYNC_ROLE_ID}> checked)`,
+          inline: false,
+        },
+        {
+          name: `Already correct (${callsignRefresh.unchanged.length})`,
+          value:
+            callsignRefresh.unchanged.length > 0
+              ? callsignRefresh.unchanged.slice(0, 8).join("\n")
+              : "None",
+          inline: false,
+        },
+        {
+          name: `Not on sheet (${callsignRefresh.notOnSheet.length})`,
+          value:
+            callsignRefresh.notOnSheet.length > 0
+              ? callsignRefresh.notOnSheet.slice(0, 8).join("\n")
               : "None",
           inline: false,
         },
       );
 
-    if (failed.length > 0) {
+    const failures = [...poFix.failed, ...callsignRefresh.failed];
+    if (failures.length > 0) {
       embed.addFields({
-        name: `Failed (${failed.length})`,
-        value: failed.slice(0, 10).join("\n"),
+        name: `Failed (${failures.length})`,
+        value: failures.slice(0, 10).join("\n"),
         inline: false,
       });
     }
 
-    if (updated.length > 15) {
-      embed.setFooter({ text: `${updated.length - 15} more updates not shown` });
+    if (poFix.skipped.length > 0) {
+      embed.setFooter({
+        text: `${poFix.skipped.length} PO member(s) already on the correct roster row`,
+      });
     }
 
     await interaction.editReply({ embeds: [embed] });
   } catch (error) {
     console.error("Refresh callsign failed:", error);
-    await interaction.editReply(`Callsign refresh failed: ${error.message}`);
+    await interaction.editReply(`Roster sync failed: ${error.message}`);
   }
 
   return true;

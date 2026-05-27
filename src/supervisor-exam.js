@@ -15,7 +15,11 @@ const {
   SUPERVISOR_APPROVED_ROLE_IDS,
   GOOGLE_SUPERVISOR_RANK_NAME,
 } = require("./constants");
-const { getRoleplayNameFromMember, updateMemberCallsign } = require("./discord-callsign");
+const {
+  getRoleplayNameFromMember,
+  updateMemberCallsign,
+  extractCallsignFromDisplayName,
+} = require("./discord-callsign");
 const {
   isSheetsConfigured,
   assignMemberToOpenRank,

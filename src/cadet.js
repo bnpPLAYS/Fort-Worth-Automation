@@ -5,6 +5,7 @@ const {
   EmbedBuilder,
   ModalBuilder,
   PermissionFlagsBits,
+  SlashCommandBuilder,
   TextInputBuilder,
   TextInputStyle,
 } = require("discord.js");
@@ -35,6 +36,8 @@ const RA_FAIL_PREFIX = "ra_fail:";
 const CADET_PANEL_COMMAND = "-becomecadetpanel";
 const CADET_ENROLL_BUTTON_ID = "cadet_enroll";
 const CADET_ENROLL_MODAL_ID = "cadet_enroll_modal";
+const RIDEALONG_COMMAND_NAME = "ridealong";
+const RIDEALONG_MODAL_ID = "ridealong_modal";
 
 const { CADET_ROLE_IDS } = require("./rank-options");
 
@@ -141,9 +144,7 @@ function buildCadetPanelEmbed() {
         "Click the button below to receive your **Cadet** roles and begin the ride-along process.\n\n" +
         "You will be asked for your **full roleplay name** (e.g. John Smith). The roster will list you as **J. Smith**.\n\n" +
         "After enrolling, you must complete **2 ride-alongs** before you can become a **Probationary Officer**.\n\n" +
-        `File a ride-along request in <#${RA_REQUEST_CHANNEL_ID}> when you are ready.\n\n` +
-        "**Format:**\n" +
-        "```\nRoblox User:\nDiscord User:\nAvailable For:\n```",
+        `When you are ready, go to <#${RA_REQUEST_CHANNEL_ID}> and run **/ridealong** to request a ride-along.`,
     )
     .setFooter({ text: "Fort Worth Police Department" });
 }
@@ -263,8 +264,7 @@ async function handleCadetInteraction(interaction) {
     `You have been enrolled as a **Cadet** and received your cadet roles.\n\n` +
     `Your roster name is **${roleplayName}** (from *${roleplayNameRaw}*).\n\n` +
     "You must complete **2 ride-alongs** before you can become a **Probationary Officer**.\n\n" +
-    `When you are ready, file a ride-along request in <#${RA_REQUEST_CHANNEL_ID}> using this format:\n` +
-    "```\nRoblox User:\nDiscord User:\nAvailable For:\n```";
+    `When you are ready, go to <#${RA_REQUEST_CHANNEL_ID}> and run **/ridealong** to request a ride-along.`;
 
   if (isSheetsConfigured()) {
     try {
@@ -341,59 +341,103 @@ function formatCooldownMinutes(remainingMs) {
   return minutes <= 1 ? "1 minute" : `${minutes} minutes`;
 }
 
-async function handleRideAlongMessage(message) {
-  if (message.author.bot || !message.guild) return false;
-  if (message.channel.id !== RA_REQUEST_CHANNEL_ID) return false;
-  if (hasProcessed(`ra:${message.id}`)) return false;
+function buildRideAlongModal() {
+  return new ModalBuilder()
+    .setCustomId(RIDEALONG_MODAL_ID)
+    .setTitle("Ride-Along Request")
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("roblox_user")
+          .setLabel("Roblox Username")
+          .setPlaceholder("Your Roblox username")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(64),
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("discord_user")
+          .setLabel("Discord Username")
+          .setPlaceholder("Leave blank to use your Discord name")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setMaxLength(64),
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("available_for")
+          .setLabel("Available For")
+          .setPlaceholder("When are you available for a ride-along?")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(1000),
+      ),
+    );
+}
 
-  markProcessed(`ra:${message.id}`);
+function buildRideAlongCommand() {
+  return new SlashCommandBuilder()
+    .setName(RIDEALONG_COMMAND_NAME)
+    .setDescription("Request a ride-along with the Fort Worth Police Department");
+}
 
-  const parsed = parseRideAlongMessage(message.content);
-  if (!parsed || !parsed.robloxUser || !parsed.discordUser || !parsed.availableFor) {
-    return true;
+async function submitRideAlongRequest(client, { guild, member, robloxUser, discordUser, availableFor }) {
+  if (isOnCooldown(member.id, RA_COOLDOWN_TYPE)) {
+    const remainingMs = getCooldownRemainingMs(member.id, RA_COOLDOWN_TYPE);
+    return {
+      ok: false,
+      message: `You can only send one ride-along request every **15 minutes**. Try again in **${formatCooldownMinutes(remainingMs)}**.`,
+    };
   }
 
-  if (isOnCooldown(message.author.id, RA_COOLDOWN_TYPE)) {
-    const remainingMs = getCooldownRemainingMs(message.author.id, RA_COOLDOWN_TYPE);
-    await message
-      .reply(
-        `You can only send one ride-along request every **15 minutes**. Try again in **${formatCooldownMinutes(remainingMs)}**.`,
-      )
-      .catch(() => null);
-    return true;
+  const requestChannel = await client.channels.fetch(RA_REQUEST_CHANNEL_ID).catch(() => null);
+  if (!requestChannel?.isTextBased()) {
+    return {
+      ok: false,
+      message: "The ride-along request channel is not available. Contact staff.",
+    };
   }
 
-  const notificationChannel = await message.client.channels
+  const notificationChannel = await client.channels
     .fetch(RA_NOTIFICATION_CHANNEL_ID)
     .catch(() => null);
 
   if (!notificationChannel?.isTextBased()) {
     console.error("Ride-along notification channel not found:", RA_NOTIFICATION_CHANNEL_ID);
-    return true;
+    return {
+      ok: false,
+      message: "Staff notification channel is not available. Contact staff.",
+    };
   }
 
-  const rolePings = RA_PING_ROLE_IDS.map((id) => `<@&${id}>`).join(" ");
-  const requestId = message.id;
-
   const request = {
-    requestId,
-    applicantId: message.author.id,
-    applicantTag: message.author.tag,
-    guildId: message.guild.id,
-    requestUrl: message.url,
-    roleplayName: getRoleplayNameFromMember(message.member),
-    robloxUser: parsed.robloxUser,
-    discordUser: parsed.discordUser,
-    availableFor: parsed.availableFor,
+    requestId: null,
+    applicantId: member.id,
+    applicantTag: member.user.tag,
+    guildId: guild.id,
+    requestUrl: null,
+    roleplayName: getRoleplayNameFromMember(member),
+    robloxUser,
+    discordUser,
+    availableFor,
     status: "pending",
     claimedById: null,
     resolvedById: null,
   };
 
-  rideAlongRequests.set(requestId, request);
+  const requestMessage = await requestChannel.send({
+    content: `<@${member.id}> submitted a **ride-along request**.`,
+    embeds: [buildRideAlongEmbed(request)],
+  });
 
+  request.requestId = requestMessage.id;
+  request.requestUrl = requestMessage.url;
+  rideAlongRequests.set(request.requestId, request);
+
+  const rolePings = RA_PING_ROLE_IDS.map((id) => `<@&${id}>`).join(" ");
   const notificationMessage = await notificationChannel.send({
-    content: `${rolePings}\n\nA **ride-along request** is pending.\n[Jump to request](${message.url})`,
+    content: `${rolePings}\n\nA **ride-along request** is pending.\n[Jump to request](${requestMessage.url})`,
     embeds: [buildRideAlongEmbed(request)],
     components: buildRideAlongButtons(request),
     allowedMentions: { roles: RA_PING_ROLE_IDS },
@@ -402,7 +446,99 @@ async function handleRideAlongMessage(message) {
   request.notificationMessageId = notificationMessage.id;
   request.notificationChannelId = notificationMessage.channel.id;
 
-  setCooldown(message.author.id, RA_COOLDOWN_MS, RA_COOLDOWN_TYPE);
+  setCooldown(member.id, RA_COOLDOWN_MS, RA_COOLDOWN_TYPE);
+
+  return {
+    ok: true,
+    message:
+      `Your ride-along request has been submitted in <#${RA_REQUEST_CHANNEL_ID}>.\n\n` +
+      "Staff will review it shortly. You will be pinged when someone claims your ride-along.",
+    requestUrl: requestMessage.url,
+  };
+}
+
+async function handleRideAlongCommand(interaction) {
+  if (interaction.isChatInputCommand() && interaction.commandName === RIDEALONG_COMMAND_NAME) {
+    if (!interaction.guild) {
+      await interaction.reply({
+        content: `Use this command in the server, in <#${RA_REQUEST_CHANNEL_ID}>.`,
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    if (interaction.channelId !== RA_REQUEST_CHANNEL_ID) {
+      await interaction.reply({
+        content: `Ride-along requests must be submitted in <#${RA_REQUEST_CHANNEL_ID}>.`,
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    await interaction.showModal(buildRideAlongModal());
+    return true;
+  }
+
+  if (interaction.isModalSubmit() && interaction.customId === RIDEALONG_MODAL_ID) {
+    const member = interaction.member;
+    if (!member) {
+      await interaction.reply({ content: "This can only be used in a server.", ephemeral: true });
+      return true;
+    }
+
+    if (interaction.channelId !== RA_REQUEST_CHANNEL_ID) {
+      await interaction.reply({
+        content: `Ride-along requests must be submitted in <#${RA_REQUEST_CHANNEL_ID}>.`,
+        ephemeral: true,
+      });
+      return true;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const robloxUser = interaction.fields.getTextInputValue("roblox_user").trim();
+    const discordUserInput = interaction.fields.getTextInputValue("discord_user").trim();
+    const availableFor = interaction.fields.getTextInputValue("available_for").trim();
+    const discordUser = discordUserInput || member.user.username;
+
+    if (!robloxUser || !availableFor) {
+      await interaction.editReply("Roblox username and availability are required.");
+      return true;
+    }
+
+    const result = await submitRideAlongRequest(interaction.client, {
+      guild: interaction.guild,
+      member,
+      robloxUser,
+      discordUser,
+      availableFor,
+    });
+
+    if (!result.ok) {
+      await interaction.editReply(result.message);
+      return true;
+    }
+
+    await interaction.editReply(result.message);
+    return true;
+  }
+
+  return false;
+}
+
+async function handleRideAlongMessage(message) {
+  if (message.author.bot || !message.guild) return false;
+  if (message.channel.id !== RA_REQUEST_CHANNEL_ID) return false;
+
+  const parsed = parseRideAlongMessage(message.content);
+  if (!parsed) return false;
+
+  if (hasProcessed(`ra-hint:${message.id}`)) return true;
+  markProcessed(`ra-hint:${message.id}`);
+
+  await message
+    .reply("Ride-along requests now use the **/ridealong** command. Please run that instead.")
+    .catch(() => null);
 
   return true;
 }
@@ -636,6 +772,7 @@ async function handleRideAlongInteraction(interaction) {
 }
 
 module.exports = {
+  buildRideAlongCommand,
   handleCadetPanelCommand,
   handleCadetInteraction,
   handleRideAlongMessage,

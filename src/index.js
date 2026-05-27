@@ -10,6 +10,7 @@ const {
 } = require("discord.js");
 const { handlePanelCommand, handleInteraction, MIN_WORDS } = require("./fastpass");
 const {
+  buildRideAlongCommand,
   handleCadetPanelCommand,
   handleCadetInteraction,
   handleRideAlongMessage,
@@ -72,6 +73,7 @@ const commands = [
   buildRosterAddCommand(),
   buildRefreshCallsignCommand(),
   buildSyncPromotionsCommand(),
+  buildRideAlongCommand(),
 ].map((command) => command.toJSON());
 
 async function registerCommands() {

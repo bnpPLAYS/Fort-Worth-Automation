@@ -475,7 +475,41 @@ async function handleRideAlongInteraction(interaction) {
 
     request.claimedById = interaction.user.id;
     await updateRideAlongNotification(interaction.client, request);
-    await interaction.reply({ content: "You claimed this ride-along.", ephemeral: true });
+
+    const claimNotice =
+      `<@${request.applicantId}> Your ride-along has been claimed by **${interaction.user.displayName}** (<@${interaction.user.id}>).\n\n` +
+      "Please head onto the **Police team** and wait at the **police station**.\n\n" +
+      "Make sure you have a **blocky avatar** and **no unrealistic accessories** before you join.";
+
+    const requestChannel = await interaction.client.channels
+      .fetch(RA_REQUEST_CHANNEL_ID)
+      .catch(() => null);
+
+    if (requestChannel?.isTextBased()) {
+      const requestMessage = await requestChannel.messages.fetch(request.requestId).catch(() => null);
+
+      if (requestMessage) {
+        await requestMessage
+          .reply({
+            content: claimNotice,
+            allowedMentions: { users: [request.applicantId] },
+          })
+          .catch((error) => {
+            console.error("Failed to notify applicant on ride-along claim:", error);
+          });
+      } else {
+        await requestChannel
+          .send({
+            content: claimNotice,
+            allowedMentions: { users: [request.applicantId] },
+          })
+          .catch((error) => {
+            console.error("Failed to notify applicant on ride-along claim:", error);
+          });
+      }
+    }
+
+    await interaction.reply({ content: "You claimed this ride-along. The applicant has been notified.", ephemeral: true });
     return true;
   }
 

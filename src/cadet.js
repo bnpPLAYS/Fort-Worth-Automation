@@ -12,6 +12,7 @@ const { EMBED_COLOR, RA_STAFF_ROLE_IDS, PROBATIONARY_OFFICER_ROLE_ID, CADET_ENRO
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { isOnCooldown, setCooldown, getCooldownRemainingMs } = require("./cooldowns");
 const { getRoleplayNameFromMember, updateMemberCallsign } = require("./discord-callsign");
+const { assignMemberRosterRoles, sendCallsignDm } = require("./member-roster");
 const { formatRoleplayInitials } = require("./roleplay-name");
 const {
   isSheetsConfigured,
@@ -249,10 +250,12 @@ async function handleCadetInteraction(interaction) {
   const rolesToAdd = CADET_ROLE_IDS.filter((roleId) => !member.roles.cache.has(roleId));
 
   if (rolesToAdd.length > 0) {
-    await member.roles.add(rolesToAdd).catch((error) => {
+    await member.roles.add(rolesToAdd, "Become Cadet").catch((error) => {
       console.error("Failed to assign cadet roles:", error);
     });
   }
+
+  await assignMemberRosterRoles(member, "Become Cadet");
 
   let reply =
     `You have been enrolled as a **Cadet** and received your cadet roles.\n\n` +
@@ -277,6 +280,17 @@ async function handleCadetInteraction(interaction) {
       if (nicknameResult.ok && nicknameResult.changed) {
         reply += `\nYour Discord nickname was updated to \`${nicknameResult.nickname}\`.`;
       }
+
+      await sendCallsignDm(member.user, {
+        callsign: cadetAssignment.callsign,
+        roleplayName,
+        rank: cadetAssignment.rank,
+        isCadet: true,
+        title: "You have been enrolled as a **Cadet**.",
+        extraLines: nicknameResult.ok && nicknameResult.changed
+          ? [`Your Discord nickname is now \`${nicknameResult.nickname}\`.`]
+          : [],
+      });
     } catch (error) {
       console.error("Cadet callsign assignment failed:", error);
       reply += `\n\nCould not assign a cadet callsign on the roster: ${error.message}`;
@@ -510,6 +524,7 @@ async function handleRideAlongInteraction(interaction) {
     await applicant.roles.add(PROBATIONARY_OFFICER_ROLE_ID).catch((error) => {
       console.error("Failed to assign probationary officer role:", error);
     });
+    await assignMemberRosterRoles(applicant, "Ride-along pass");
 
     const nicknameResult = await updateMemberCallsign(
       applicant,
@@ -531,16 +546,17 @@ async function handleRideAlongInteraction(interaction) {
       staffNote += ` Nickname: \`${nicknameResult.nickname}\`.`;
     }
 
-    await applicant.user
-      .send(
-        "Your ride-along has been marked **Passed**.\n\n" +
-          "You have been promoted to **Probationary Officer**.\n\n" +
-          `Your department callsign is **${rosterResult.newCallsign}**. You may use this callsign in-game.\n` +
-          (nicknameResult.ok && nicknameResult.changed
-            ? `Your Discord nickname is now \`${nicknameResult.nickname}\`.`
-            : ""),
-      )
-      .catch(() => null);
+    await sendCallsignDm(applicant.user, {
+      callsign: rosterResult.newCallsign,
+      roleplayName,
+      rank: rosterResult.newRank,
+      title:
+        "Your ride-along has been marked **Passed**.\n\nYou have been promoted to **Probationary Officer**.",
+      extraLines:
+        nicknameResult.ok && nicknameResult.changed
+          ? [`Your Discord nickname is now \`${nicknameResult.nickname}\`.`]
+          : [],
+    });
 
     await interaction.editReply(`Marked **Passed** for ${applicant}.\n${staffNote}`);
     return true;

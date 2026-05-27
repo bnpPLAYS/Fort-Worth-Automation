@@ -1,12 +1,12 @@
-const { PROBATIONARY_OFFICER_ROLE_ID } = require("./constants");
+const { PROBATIONARY_OFFICER_ROLE_ID, MEMBER_ROSTER_ROLE_IDS } = require("./constants");
 const { ranksMatch } = require("./rank-matching");
 const { isCadetSheetRank } = require("./google-sheets/roster-ranks");
+const { mergeRoleIds } = require("./member-roster");
 
-const CADET_ROLE_IDS = [
-  "1495414411840454676",
-  "1484951746852818944",
-  "1484951786623205516",
-];
+const CADET_ROLE_IDS = mergeRoleIds(
+  ["1495414411840454676", "1484951786623205516"],
+  MEMBER_ROSTER_ROLE_IDS,
+);
 
 /** Discord role + sheet rank label pairs used by Fast Pass and /rosteradd */
 const RANK_OPTIONS = [

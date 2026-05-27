@@ -105,6 +105,19 @@ For **rank**, start typing — the bot suggests every rank on the sheet that cur
 
 Requires open rows on the sheet for the selected rank.
 
+### `/refresh-callsign` (role `1484949625281712281`)
+
+Syncs every member with role `1484951746852818944` against the Google roster:
+
+- Updates Discord nickname to match sheet **callsign** and **RP name**
+- DMs each member their callsign from the sheet
+
+Use after bulk callsign changes on the spreadsheet. Members must have their RP name in their nickname (e.g. `3005 | J. Smith`) or a matching callsign for the bot to find their row.
+
+### Member roster roles
+
+When someone is added via **Become Cadet**, **Fast Pass accept**, **ride-along pass**, or **`/rosteradd`**, the bot assigns roles `1484951746852818944` and `1498375617455067387` and DMs their callsign when assigned.
+
 Rank names on the sheet must match Discord role names loosely (e.g. `Probationary Officer`, `LIEUTENANT`).
 - Promotion clears the old **RP NAME** and fills the first open slot in the new rank
 

@@ -3,6 +3,8 @@ const { EMBED_COLOR, ROSTER_ADD_STAFF_ROLE_IDS } = require("./constants");
 const { formatRoleplayInitials } = require("./roleplay-name");
 const { updateMemberCallsign } = require("./discord-callsign");
 const { resolveRankForRosterAdd } = require("./rank-options");
+const { MEMBER_ROSTER_ROLE_IDS } = require("./constants");
+const { sendCallsignDm, mergeRoleIds } = require("./member-roster");
 const {
   isSheetsConfigured,
   getSheetsConfigHelpMessage,
@@ -192,9 +194,10 @@ async function handleRosterAddCommand(interaction) {
     const callsign = rosterResult.newCallsign ?? rosterResult.callsign;
     const sheetRank = rosterResult.newRank ?? rosterResult.rank;
 
+    const roleIds = mergeRoleIds(rankConfig.discordRoleIds, MEMBER_ROSTER_ROLE_IDS);
     const roleResult =
-      rankConfig.discordRoleIds.length > 0
-        ? await assignRolesToMember(member, rankConfig.discordRoleIds)
+      roleIds.length > 0
+        ? await assignRolesToMember(member, roleIds)
         : { added: [], failed: [], skipped: true };
 
     const nicknameResult = await updateMemberCallsign(member, callsign, roleplayName);
@@ -232,25 +235,17 @@ async function handleRosterAddCommand(interaction) {
 
     await interaction.editReply({ embeds: [embed] });
 
-    const dmLines = [
-      `You have been added to the **Fort Worth Police Department** roster.`,
-      "",
-      `**Roster name:** ${roleplayName}`,
-      `**Rank:** ${sheetRank}`,
-      `**Callsign:** ${callsign}`,
-    ];
-
-    if (rankConfig.useCadetCallsign) {
-      dmLines.push("", "Do **not** use your cadet callsign in-game until you are promoted.");
-    } else {
-      dmLines.push("", "You may use this callsign in-game.");
-    }
-
-    if (nicknameResult.ok && nicknameResult.changed) {
-      dmLines.push(`Your Discord nickname is now \`${nicknameResult.nickname}\`.`);
-    }
-
-    await member.user.send(dmLines.join("\n")).catch(() => null);
+    await sendCallsignDm(member.user, {
+      callsign,
+      roleplayName,
+      rank: sheetRank,
+      isCadet: rankConfig.useCadetCallsign,
+      title: "You have been added to the **Fort Worth Police Department** roster.",
+      extraLines:
+        nicknameResult.ok && nicknameResult.changed
+          ? [`Your Discord nickname is now \`${nicknameResult.nickname}\`.`]
+          : [],
+    });
   } catch (error) {
     console.error("Roster add failed:", error);
     await interaction.editReply(

@@ -13,6 +13,7 @@ const { getCooldownEnd, isOnCooldown, setCooldown } = require("./cooldowns");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { EMBED_COLOR, STAFF_PING_ROLE_ID } = require("./constants");
 const { updateMemberCallsign } = require("./discord-callsign");
+const { assignMemberRosterRoles, sendCallsignDm } = require("./member-roster");
 const { formatRoleplayInitials } = require("./roleplay-name");
 const {
   isSheetsConfigured,
@@ -567,17 +568,19 @@ async function handleInteraction(interaction) {
     const rankLabel = rank?.label ?? "Unknown Rank";
 
     if (member && guild) {
-      await member.roles.add(roleId).catch((error) => {
+      await member.roles.add(roleId, "Fast Pass accepted").catch((error) => {
         console.error("Failed to assign role:", error);
       });
+      await assignMemberRosterRoles(member, "Fast Pass accepted");
     }
 
     let rosterSummary = "";
+    let rosterResult = null;
     if (member && isSheetsConfigured() && application.roleplayName) {
       const roleplayName = application.roleplayName;
 
       try {
-        const rosterResult = await assignMemberToOpenRank(roleplayName, rankLabel);
+        rosterResult = await assignMemberToOpenRank(roleplayName, rankLabel);
         const nicknameResult = await updateMemberCallsign(
           member,
           rosterResult.newCallsign,
@@ -591,6 +594,19 @@ async function handleInteraction(interaction) {
             : nicknameResult.ok
               ? ""
               : ` (nickname not updated: ${nicknameResult.reason})`);
+
+        await sendCallsignDm(member.user, {
+          callsign: rosterResult.newCallsign,
+          roleplayName,
+          rank: rosterResult.newRank,
+          title: "Congratulations! Your Fast Pass application has been **accepted**.",
+          extraLines: [
+            `Please read over <#${GUIDE_CHANNEL_ID}> before getting started.`,
+            ...(nicknameResult.ok && nicknameResult.changed
+              ? [`Your Discord nickname is now \`${nicknameResult.nickname}\`.`]
+              : []),
+          ],
+        });
       } catch (error) {
         console.error("Fast Pass roster assignment failed:", error);
         rosterSummary = `\nRoster assignment failed: ${error.message}`;
@@ -612,25 +628,21 @@ async function handleInteraction(interaction) {
       });
     }
 
-    const applicant = await interaction.client.users.fetch(application.userId).catch(() => null);
-    if (applicant) {
-      let dmContent =
-        `Congratulations! Your Fast Pass application has been **accepted**.\n\n` +
-        `You have been assigned the rank: **${application.rankLabel}**\n\n` +
-        `Please read over <#${GUIDE_CHANNEL_ID}> before getting started.`;
+    if (!rosterResult) {
+      const applicant = await interaction.client.users.fetch(application.userId).catch(() => null);
+      if (applicant) {
+        let dmContent =
+          `Congratulations! Your Fast Pass application has been **accepted**.\n\n` +
+          `You have been assigned the rank: **${application.rankLabel}**\n\n` +
+          `Please read over <#${GUIDE_CHANNEL_ID}> before getting started.`;
 
-      if (rosterSummary.includes("callsign **")) {
-        const callsignMatch = rosterSummary.match(/callsign \*\*(.+?)\*\*/);
-        if (callsignMatch) {
+        if (rosterSummary.includes("Roster assignment failed")) {
           dmContent +=
-            `\n\nYour roster name is **${application.roleplayName}** and your department callsign is **${callsignMatch[1]}**. You may use this callsign in-game.`;
+            "\n\nYour roster callsign could not be assigned automatically. Contact staff to be added to the database.";
         }
-      } else if (rosterSummary.includes("Roster assignment failed")) {
-        dmContent +=
-          "\n\nYour roster callsign could not be assigned automatically. Contact staff to be added to the database.";
-      }
 
-      await applicant.send({ content: dmContent }).catch(() => {});
+        await applicant.send({ content: dmContent }).catch(() => {});
+      }
     }
 
     await interaction.editReply({

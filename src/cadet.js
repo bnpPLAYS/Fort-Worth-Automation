@@ -77,6 +77,67 @@ function getRideAlongRequest(requestId) {
   return rideAlongRequests.get(requestId) ?? null;
 }
 
+function isImageAttachment(attachment) {
+  const contentType = attachment.contentType ?? "";
+  if (contentType.startsWith("image/")) {
+    return true;
+  }
+
+  return /\.(png|jpe?g|gif|webp|bmp)$/i.test(attachment.name ?? "");
+}
+
+async function findRideAlongScreenshotMessage(client, request, userId) {
+  if (!request.notificationChannelId || !request.notificationMessageId) {
+    return {
+      ok: false,
+      message: "Staff notification not found for this ride-along request.",
+    };
+  }
+
+  const channel = await client.channels.fetch(request.notificationChannelId).catch(() => null);
+  if (!channel?.isTextBased()) {
+    return {
+      ok: false,
+      message: "Could not access the staff notification channel.",
+    };
+  }
+
+  const recentMessages = await channel.messages
+    .fetch({ limit: 100, after: request.notificationMessageId })
+    .catch(() => null);
+
+  if (!recentMessages) {
+    return {
+      ok: false,
+      message: "Could not read messages in the staff notification channel.",
+    };
+  }
+
+  const screenshotMessage = recentMessages.find((message) => {
+    if (message.author.id !== userId) return false;
+    if (message.reference?.messageId !== request.notificationMessageId) return false;
+    return message.attachments.some((attachment) => isImageAttachment(attachment));
+  });
+
+  if (!screenshotMessage) {
+    const notificationLink = `https://discord.com/channels/${request.guildId}/${request.notificationChannelId}/${request.notificationMessageId}`;
+    return {
+      ok: false,
+      message:
+        "Before starting, **reply to the ride-along notification** in this channel with a **screenshot of you and your cadet**.\n\n" +
+        `[Jump to notification message](${notificationLink})`,
+    };
+  }
+
+  const attachment = screenshotMessage.attachments.find((item) => isImageAttachment(item));
+
+  return {
+    ok: true,
+    messageId: screenshotMessage.id,
+    url: attachment?.url ?? null,
+  };
+}
+
 function buildRideAlongEmbed(request) {
   const embed = new EmbedBuilder()
     .setColor(EMBED_COLOR)
@@ -107,6 +168,11 @@ function buildRideAlongEmbed(request) {
       value: `<@${request.startedById}>`,
       inline: true,
     });
+  }
+
+  if (request.screenshotUrl) {
+    embed.setImage(request.screenshotUrl);
+    embed.addFields({ name: "Start Screenshot", value: "[View upload](https://discord.com/channels/" + `${request.guildId}/${request.notificationChannelId}/${request.screenshotMessageId})`, inline: false });
   }
 
   const noteCount = request.notes?.length ?? 0;
@@ -1103,7 +1169,7 @@ async function handleRideAlongInteraction(interaction) {
     await interaction.reply({
       content:
         "You claimed this ride-along. The applicant has been notified.\n\n" +
-        "Click **Start Ride Along** when you begin supervising them.",
+        "Before you click **Start Ride Along**, **reply to the ride-along notification above** in this channel with a **screenshot of you and your cadet**.",
       ephemeral: true,
     });
     return true;
@@ -1123,8 +1189,21 @@ async function handleRideAlongInteraction(interaction) {
       return true;
     }
 
+    const screenshot = await findRideAlongScreenshotMessage(
+      interaction.client,
+      request,
+      interaction.user.id,
+    );
+
+    if (!screenshot.ok) {
+      await interaction.reply({ content: screenshot.message, ephemeral: true });
+      return true;
+    }
+
     request.startedById = interaction.user.id;
     request.startedAt = Date.now();
+    request.screenshotMessageId = screenshot.messageId;
+    request.screenshotUrl = screenshot.url;
     if (!request.notes) request.notes = [];
     scheduleRideAlongEndReminder(interaction.client, request);
     await updateRideAlongNotification(interaction.client, request);

@@ -12,7 +12,7 @@ const {
 const { getCooldownEnd, isOnCooldown, setCooldown } = require("./cooldowns");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { EMBED_COLOR, STAFF_PING_ROLE_ID } = require("./constants");
-const { updateMemberCallsign } = require("./discord-callsign");
+const { updateMemberCallsign, extractCallsignFromDisplayName } = require("./discord-callsign");
 const { assignMemberRosterRoles, sendCallsignDm } = require("./member-roster");
 const { formatRoleplayInitials } = require("./roleplay-name");
 const {
@@ -580,7 +580,9 @@ async function handleInteraction(interaction) {
       const roleplayName = application.roleplayName;
 
       try {
-        rosterResult = await assignMemberToOpenRank(roleplayName, rankLabel);
+        rosterResult = await assignMemberToOpenRank(roleplayName, rankLabel, {
+          currentCallsign: extractCallsignFromDisplayName(member.displayName),
+        });
         const nicknameResult = await updateMemberCallsign(
           member,
           rosterResult.newCallsign,

@@ -24,6 +24,7 @@ const {
   resolveRoleplayNameForMember,
   promoteToProbationaryOnRoster,
 } = require("./google-sheets/roster-sync");
+const { getCallsignFromMember } = require("./google-sheets/roster-match");
 
 const RA_COOLDOWN_MS = 15 * 60 * 1000;
 const RA_COOLDOWN_TYPE = "ride-along";
@@ -313,7 +314,9 @@ async function executeRideAlongPass(interaction, request, applicant, score) {
 
   let rosterResult;
   try {
-    rosterResult = await promoteToProbationaryOnRoster(roleplayName);
+    rosterResult = await promoteToProbationaryOnRoster(roleplayName, {
+      currentCallsign: getCallsignFromMember(applicant),
+    });
   } catch (error) {
     console.error("Ride-along pass roster assignment failed:", error);
     await interaction.editReply(
@@ -379,7 +382,9 @@ async function executeRideAlongFail(interaction, request, applicant, score) {
 
   if (isSheetsConfigured()) {
     try {
-      await clearRosterForName(getRoleplayNameFromMember(applicant));
+      await clearRosterForName(getRoleplayNameFromMember(applicant), {
+        currentCallsign: getCallsignFromMember(applicant),
+      });
     } catch (error) {
       console.error("Ride-along fail roster clear failed:", error);
     }
@@ -538,7 +543,9 @@ async function handleCadetInteraction(interaction) {
 
   if (isSheetsConfigured()) {
     try {
-      const cadetAssignment = await assignCadetCallsign(roleplayName);
+      const cadetAssignment = await assignCadetCallsign(roleplayName, {
+        currentCallsign: getCallsignFromMember(member),
+      });
       const nicknameResult = await updateMemberCallsign(
         member,
         cadetAssignment.callsign,

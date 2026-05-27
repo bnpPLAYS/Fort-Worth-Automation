@@ -376,7 +376,9 @@ async function handleSupervisorExamInteraction(interaction) {
         process.env.GOOGLE_SUPERVISOR_RANK_NAME || GOOGLE_SUPERVISOR_RANK_NAME;
 
       try {
-        const rosterResult = await assignMemberToOpenRank(roleplayName, supervisorRank);
+        const rosterResult = await assignMemberToOpenRank(roleplayName, supervisorRank, {
+          currentCallsign: extractCallsignFromDisplayName(member.displayName),
+        });
         const nicknameResult = await updateMemberCallsign(
           member,
           rosterResult.newCallsign,

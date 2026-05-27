@@ -18,6 +18,21 @@ function formatCallsignForDisplay(value) {
   return digits.length >= 4 ? digits.slice(-4) : digits.padStart(4, "0");
 }
 
+function callsignsMatch(sheetCallsign, memberCallsign) {
+  if (!sheetCallsign || !memberCallsign) return false;
+
+  const formattedSheet = formatCallsignForDisplay(sheetCallsign);
+  const formattedMember = formatCallsignForDisplay(memberCallsign);
+
+  if (/^C-/i.test(formattedSheet)) {
+    return formattedSheet.toUpperCase() === formattedMember.toUpperCase();
+  }
+
+  return (
+    String(formattedSheet).replace(/\D/g, "") === String(formattedMember).replace(/\D/g, "")
+  );
+}
+
 function extractCallsignFromDisplayName(displayName) {
   const text = String(displayName ?? "").trim();
   const prefixMatch = text.match(ANY_CALLSIGN_PREFIX_PATTERN);
@@ -117,30 +132,35 @@ async function findMemberForRosterEntry(guild, { roleplayName, currentCallsign }
     await guild.members.fetch().catch(() => null);
   }
 
-  const byCallsign = guild.members.cache.find((member) => {
-    const memberCallsign = extractCallsignFromDisplayName(member.displayName);
-    if (/^C-/i.test(String(currentCallsign))) {
-      return memberCallsign.toUpperCase() === String(currentCallsign).trim().toUpperCase();
-    }
-    return memberCallsign === normalizedCallsign;
-  });
+  const byCallsign = guild.members.cache.find((member) =>
+    callsignsMatch(currentCallsign, extractCallsignFromDisplayName(member.displayName)),
+  );
   if (byCallsign) return byCallsign;
 
-  return (
-    guild.members.cache.find((member) => {
-      const display = member.displayName.trim().toLowerCase();
-      const afterPipe = display.split("|").pop()?.trim() ?? "";
-      return (
-        display === normalizedName ||
-        afterPipe === normalizedName ||
-        display.includes(normalizedName)
-      );
-    }) ?? null
-  );
+  const byName = guild.members.cache.filter((member) => {
+    const display = member.displayName.trim().toLowerCase();
+    const afterPipe = display.split("|").pop()?.trim() ?? "";
+    return afterPipe === normalizedName;
+  });
+
+  if (byName.length === 1) {
+    return byName[0];
+  }
+
+  if (byName.length > 1 && currentCallsign) {
+    return (
+      byName.find((member) =>
+        callsignsMatch(currentCallsign, extractCallsignFromDisplayName(member.displayName)),
+      ) ?? null
+    );
+  }
+
+  return null;
 }
 
 module.exports = {
   formatCallsignForDisplay,
+  callsignsMatch,
   extractCallsignFromDisplayName,
   getRoleplayNameFromMember,
   buildDisplayNameWithCallsign,

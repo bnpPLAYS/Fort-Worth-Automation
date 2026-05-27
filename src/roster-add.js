@@ -5,6 +5,7 @@ const { updateMemberCallsign } = require("./discord-callsign");
 const { resolveRankForRosterAdd } = require("./rank-options");
 const { MEMBER_ROSTER_ROLE_IDS } = require("./constants");
 const { sendCallsignDm, mergeRoleIds } = require("./member-roster");
+const { getCallsignFromMember } = require("./google-sheets/roster-match");
 const {
   isSheetsConfigured,
   getSheetsConfigHelpMessage,
@@ -174,7 +175,9 @@ async function handleRosterAddCommand(interaction) {
   }
 
   try {
-    const existing = await findRosterEntriesForName(roleplayName);
+    const memberCallsign = getCallsignFromMember(member);
+    const existing = await findRosterEntriesForName(roleplayName, { callsign: memberCallsign });
+
     if (existing.length > 0) {
       const slots = existing.map((entry) => `${entry.rank} / ${entry.callsign}`).join(", ");
       await interaction.editReply(
@@ -184,11 +187,24 @@ async function handleRosterAddCommand(interaction) {
       return true;
     }
 
+    if (!memberCallsign) {
+      const allWithName = await findRosterEntriesForName(roleplayName);
+      if (allWithName.length > 1) {
+        await interaction.editReply(
+          `Multiple people named **${roleplayName}** are on the roster. ` +
+            "Set their Discord nickname to `callsign | Name` first, or clear the duplicate row manually.",
+        );
+        return true;
+      }
+    }
+
     let rosterResult;
     if (rankConfig.useCadetCallsign) {
-      rosterResult = await assignCadetCallsign(roleplayName);
+      rosterResult = await assignCadetCallsign(roleplayName, { currentCallsign: memberCallsign });
     } else {
-      rosterResult = await assignMemberToOpenRank(roleplayName, rankConfig.sheetRank);
+      rosterResult = await assignMemberToOpenRank(roleplayName, rankConfig.sheetRank, {
+        currentCallsign: memberCallsign,
+      });
     }
 
     const callsign = rosterResult.newCallsign ?? rosterResult.callsign;

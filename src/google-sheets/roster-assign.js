@@ -6,10 +6,10 @@ const {
   getCadetRankName,
 } = require("./client");
 const { ranksMatch } = require("../rank-matching");
-
-function normalize(value) {
-  return String(value).trim().toLowerCase();
-}
+const {
+  filterEntriesByName,
+  resolveEntriesByNameAndCallsign,
+} = require("./roster-match");
 
 function findOpenSlotInRank(entries, newRank) {
   return entries.find(
@@ -17,13 +17,6 @@ function findOpenSlotInRank(entries, newRank) {
       ranksMatch(newRank, entry.rank) &&
       entry.callsign.length > 0 &&
       entry.name.length === 0,
-  );
-}
-
-function findEntriesForName(entries, roleplayName) {
-  const normalizedName = normalize(roleplayName);
-  return entries.filter(
-    (entry) => entry.name.length > 0 && normalize(entry.name) === normalizedName,
   );
 }
 
@@ -65,7 +58,7 @@ async function assignNameToSlot(sheetName, slot, roleplayName) {
   ]);
 }
 
-async function assignMemberToOpenRank(roleplayName, newRank) {
+async function assignMemberToOpenRank(roleplayName, newRank, { currentCallsign } = {}) {
   const { entries, sheetName } = await getRosterRows();
   const openSlot = findOpenSlotInRank(entries, newRank);
 
@@ -75,7 +68,7 @@ async function assignMemberToOpenRank(roleplayName, newRank) {
     );
   }
 
-  const existingEntries = findEntriesForName(entries, roleplayName);
+  const existingEntries = resolveEntriesByNameAndCallsign(entries, roleplayName, currentCallsign);
   await clearNameFromEntries(sheetName, existingEntries);
   await assignNameToSlot(sheetName, openSlot, roleplayName);
 
@@ -89,7 +82,7 @@ async function assignMemberToOpenRank(roleplayName, newRank) {
   };
 }
 
-async function assignCadetCallsign(roleplayName) {
+async function assignCadetCallsign(roleplayName, { currentCallsign } = {}) {
   const { entries, sheetName } = await getRosterRows();
   const openSlot = findOpenCadetSlot(entries);
 
@@ -99,7 +92,7 @@ async function assignCadetCallsign(roleplayName) {
     );
   }
 
-  const existingEntries = findEntriesForName(entries, roleplayName);
+  const existingEntries = resolveEntriesByNameAndCallsign(entries, roleplayName, currentCallsign);
   await clearNameFromEntries(sheetName, existingEntries);
   await assignNameToSlot(sheetName, openSlot, roleplayName);
 
@@ -110,16 +103,21 @@ async function assignCadetCallsign(roleplayName) {
   };
 }
 
-async function clearRosterForName(roleplayName) {
+async function clearRosterForName(roleplayName, { currentCallsign } = {}) {
   const { entries, sheetName } = await getRosterRows();
-  const existingEntries = findEntriesForName(entries, roleplayName);
+  const existingEntries = resolveEntriesByNameAndCallsign(entries, roleplayName, currentCallsign);
   await clearNameFromEntries(sheetName, existingEntries);
   return existingEntries.length;
 }
 
-async function findRosterEntriesForName(roleplayName) {
+async function findRosterEntriesForName(roleplayName, { callsign } = {}) {
   const { entries } = await getRosterRows();
-  return findEntriesForName(entries, roleplayName);
+
+  if (callsign) {
+    return resolveEntriesByNameAndCallsign(entries, roleplayName, callsign, { requireUnique: false });
+  }
+
+  return filterEntriesByName(entries, roleplayName);
 }
 
 module.exports = {

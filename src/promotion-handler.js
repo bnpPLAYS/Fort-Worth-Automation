@@ -7,6 +7,7 @@ const {
   processPromotion,
 } = require("./google-sheets/promotion");
 const { findMemberForRosterEntry, updateMemberCallsign } = require("./discord-callsign");
+const { recordMemberRosterLinkFromResult } = require("./roster-member-link");
 const {
   canBypassRankEligibility,
   validatePromotionRequester,
@@ -82,6 +83,8 @@ async function handlePromotionMessage(message) {
       result.newCallsign,
       parsed.roleplayName,
     );
+
+    recordMemberRosterLinkFromResult(memberToUpdate, result);
 
     const embed = new EmbedBuilder()
       .setColor(EMBED_COLOR)

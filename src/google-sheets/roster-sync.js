@@ -12,7 +12,8 @@ const {
   formatCallsignForDisplay,
   extractCallsignFromDisplayName,
 } = require("../discord-callsign");
-const { getCallsignFromMember } = require("./roster-match");
+const { getRosterCallsignForMember, getLinkedRoleplayName } = require("./roster-match");
+const { recordMemberRosterLink } = require("../roster-member-link");
 const { sendCallsignDm } = require("../member-roster");
 const {
   PROBATIONARY_OFFICER_ROLE_ID,
@@ -38,6 +39,11 @@ function needsProbationaryRosterMove(entries, probationaryRank) {
 }
 
 async function resolveRoleplayNameForMember(member, fallbackName = "") {
+  const linkedName = getLinkedRoleplayName(member);
+  if (linkedName) {
+    return linkedName;
+  }
+
   const namedEntries = await getNamedRosterEntries();
   const matchedEntry = findRosterEntryForMember(namedEntries, member);
   if (matchedEntry) {
@@ -45,7 +51,7 @@ async function resolveRoleplayNameForMember(member, fallbackName = "") {
   }
 
   const fromNickname = getRoleplayNameFromMember(member);
-  const callsign = getCallsignFromMember(member);
+  const callsign = getRosterCallsignForMember(member);
   const candidates = [fromNickname, fallbackName].filter(Boolean);
 
   for (const name of candidates) {
@@ -85,6 +91,8 @@ async function syncMemberCallsignFromEntry(member, entry, { dmOnChange = true } 
     });
   }
 
+  recordMemberRosterLink(member, entry);
+
   return {
     callsign,
     callsignChanged,
@@ -113,15 +121,15 @@ async function fixProbationaryRosterForGuild(guild) {
         continue;
       }
 
-      const callsign = getCallsignFromMember(member);
-      const entries = await findRosterEntriesForName(roleplayName, { callsign });
+      const callsign = getRosterCallsignForMember(member);
+      const entries = await findRosterEntriesForName(roleplayName, { callsign, member });
       if (!needsProbationaryRosterMove(entries, probationaryRank)) {
         skipped.push(`${member.displayName} (already on PO row)`);
         continue;
       }
 
       const rosterResult = await promoteToProbationaryOnRoster(roleplayName, {
-        currentCallsign: getCallsignFromMember(member),
+        currentCallsign: getRosterCallsignForMember(member),
       });
       const syncResult = await syncMemberCallsignFromEntry(
         member,
@@ -129,6 +137,7 @@ async function fixProbationaryRosterForGuild(guild) {
           name: roleplayName,
           callsign: rosterResult.newCallsign,
           rank: rosterResult.newRank,
+          rowNumber: rosterResult.rowNumber,
         },
         { dmOnChange: true },
       );
@@ -258,8 +267,8 @@ async function syncPromotionsFromDiscordForGuild(guild) {
         continue;
       }
 
-      const callsign = getCallsignFromMember(member);
-      const sheetEntries = await findRosterEntriesForName(roleplayName, { callsign });
+      const callsign = getRosterCallsignForMember(member);
+      const sheetEntries = await findRosterEntriesForName(roleplayName, { callsign, member });
       const sheetEntry =
         sheetEntries.length === 1
           ? sheetEntries[0]
@@ -279,7 +288,7 @@ async function syncPromotionsFromDiscordForGuild(guild) {
       }
 
       const rosterResult = await assignMemberToOpenRank(roleplayName, discordRank, {
-        currentCallsign: getCallsignFromMember(member),
+        currentCallsign: getRosterCallsignForMember(member),
       });
       const syncResult = await syncMemberCallsignFromEntry(
         member,

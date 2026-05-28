@@ -24,6 +24,8 @@ const {
   isSheetsConfigured,
   assignMemberToOpenRank,
 } = require("./google-sheets/roster-assign");
+const { getRosterCallsignForMember } = require("./google-sheets/roster-match");
+const { recordMemberRosterLinkFromResult } = require("./roster-member-link");
 
 const TYPE_SUPERVISOR_EXAM_ID = "support_type_supervisor_exam";
 const SUPERVISOR_EXAM_BEGIN_ID = "supervisor_exam_begin";
@@ -381,7 +383,7 @@ async function handleSupervisorExamInteraction(interaction) {
 
       try {
         const rosterResult = await assignMemberToOpenRank(roleplayName, supervisorRank, {
-          currentCallsign: extractCallsignFromDisplayName(member.displayName),
+          currentCallsign: getRosterCallsignForMember(member),
         });
         const nicknameResult = await updateMemberCallsign(
           member,
@@ -395,6 +397,7 @@ async function handleSupervisorExamInteraction(interaction) {
 
         application.rosterCallsign = rosterResult.newCallsign;
         application.rosterRank = rosterResult.newRank;
+        recordMemberRosterLinkFromResult(member, rosterResult);
       } catch (error) {
         console.error("Supervisor exam roster assignment failed:", error);
         rosterSummary = `\nRoster assignment failed: ${error.message}`;

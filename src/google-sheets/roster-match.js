@@ -4,6 +4,7 @@ const {
   getRoleplayNameFromMember,
   callsignsMatch,
 } = require("../discord-callsign");
+const { getRosterLink } = require("../roster-links-store");
 
 function normalizeName(value) {
   return String(value).trim().toLowerCase();
@@ -48,9 +49,48 @@ function resolveEntriesByNameAndCallsign(entries, roleplayName, callsign, { requ
   return byCallsign;
 }
 
+function findEntryByStoredLink(namedEntries, link) {
+  if (!link?.roleplayName) return null;
+
+  const normalizedLinkName = normalizeName(link.roleplayName);
+
+  if (link.rowNumber) {
+    const byRow = namedEntries.find((entry) => entry.rowNumber === link.rowNumber);
+    if (byRow && normalizeName(byRow.name) === normalizedLinkName) {
+      return byRow;
+    }
+  }
+
+  const byNameAndCallsign = namedEntries.filter(
+    (entry) =>
+      normalizeName(entry.name) === normalizedLinkName &&
+      link.callsign &&
+      callsignsMatch(entry.callsign, link.callsign),
+  );
+
+  if (byNameAndCallsign.length === 1) {
+    return byNameAndCallsign[0];
+  }
+
+  if (link.rowNumber) {
+    const byRow = namedEntries.find((entry) => entry.rowNumber === link.rowNumber);
+    if (byRow && normalizeName(byRow.name) === normalizedLinkName) {
+      return byRow;
+    }
+  }
+
+  return null;
+}
+
 function findRosterEntryForMember(entries, member) {
   const namedEntries = entries.filter((entry) => entry.name.length > 0);
-  if (namedEntries.length === 0) return null;
+  if (namedEntries.length === 0 || !member) return null;
+
+  const storedLink = member.id ? getRosterLink(member.id) : null;
+  const linkedEntry = findEntryByStoredLink(namedEntries, storedLink);
+  if (linkedEntry) {
+    return linkedEntry;
+  }
 
   const memberCallsign = extractCallsignFromDisplayName(member.displayName);
   const roleplayName = normalizeName(getRoleplayNameFromMember(member));
@@ -81,6 +121,20 @@ function getCallsignFromMember(member) {
   return callsign || null;
 }
 
+/** Callsign from nickname, or from the bot's stored Discord ↔ roster link. */
+function getRosterCallsignForMember(member) {
+  const fromNickname = getCallsignFromMember(member);
+  if (fromNickname) return fromNickname;
+
+  const link = member?.id ? getRosterLink(member.id) : null;
+  return link?.callsign ? formatCallsignForDisplay(link.callsign) : null;
+}
+
+function getLinkedRoleplayName(member) {
+  const link = member?.id ? getRosterLink(member.id) : null;
+  return link?.roleplayName?.trim() || null;
+}
+
 module.exports = {
   normalizeName,
   callsignsMatch,
@@ -88,4 +142,6 @@ module.exports = {
   resolveEntriesByNameAndCallsign,
   findRosterEntryForMember,
   getCallsignFromMember,
+  getRosterCallsignForMember,
+  getLinkedRoleplayName,
 };

@@ -5,7 +5,8 @@ const { updateMemberCallsign } = require("./discord-callsign");
 const { resolveRankForRosterAdd } = require("./rank-options");
 const { MEMBER_ROSTER_ROLE_IDS } = require("./constants");
 const { sendCallsignDm, mergeRoleIds } = require("./member-roster");
-const { getCallsignFromMember } = require("./google-sheets/roster-match");
+const { getRosterCallsignForMember } = require("./google-sheets/roster-match");
+const { recordMemberRosterLink } = require("./roster-member-link");
 const {
   isSheetsConfigured,
   getSheetsConfigHelpMessage,
@@ -175,8 +176,8 @@ async function handleRosterAddCommand(interaction) {
   }
 
   try {
-    const memberCallsign = getCallsignFromMember(member);
-    const existing = await findRosterEntriesForName(roleplayName, { callsign: memberCallsign });
+    const memberCallsign = getRosterCallsignForMember(member);
+    const existing = await findRosterEntriesForName(roleplayName, { callsign: memberCallsign, member });
 
     if (existing.length > 0) {
       const slots = existing.map((entry) => `${entry.rank} / ${entry.callsign}`).join(", ");
@@ -261,6 +262,13 @@ async function handleRosterAddCommand(interaction) {
         nicknameResult.ok && nicknameResult.changed
           ? [`Your Discord nickname is now \`${nicknameResult.nickname}\`.`]
           : [],
+    });
+
+    recordMemberRosterLink(member, {
+      name: roleplayName,
+      callsign,
+      rank: sheetRank,
+      rowNumber: rosterResult.rowNumber,
     });
   } catch (error) {
     console.error("Roster add failed:", error);

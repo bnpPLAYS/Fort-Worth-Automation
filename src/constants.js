@@ -21,6 +21,10 @@ module.exports = {
   /** Always assigned when added to the roster (cadet, Fast Pass, ride-along pass, etc.) */
   MEMBER_ROSTER_ROLE_IDS: ["1484951746852818944", "1498375617455067387"],
   PROBATIONARY_OFFICER_ROLE_ID: "1484975766868594699",
+  /** Internal Affairs — may run /infraction */
+  INFRACTION_ROLE_ID: "1484976048012660756",
+  /** Channel for Internal Affairs release announcements */
+  IA_RELEASE_CHANNEL_ID: "1495998701653590056",
   GOOGLE_CADET_RANK_NAME: "Cadet",
   GOOGLE_PROBATIONARY_RANK_NAME: "Probationary Officer",
   GOOGLE_SUPERVISOR_RANK_NAME: "Corporal",

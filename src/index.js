@@ -26,6 +26,13 @@ const {
 const { buildRefreshCallsignCommand, handleRefreshCallsignCommand } = require("./refresh-callsign");
 const { buildSyncPromotionsCommand, handleSyncPromotionsCommand } = require("./sync-promotions");
 const {
+  buildInfractionCommand,
+  buildInfoCommand,
+  handleInternalAffairsAutocomplete,
+  handleInfractionCommand,
+  handleInfoCommand,
+} = require("./internal-affairs");
+const {
   handleSupportPanelCommand,
   handleStaffPanelCommand,
   handleSupportInteraction,
@@ -74,6 +81,8 @@ const commands = [
   buildRefreshCallsignCommand(),
   buildSyncPromotionsCommand(),
   buildRideAlongCommand(),
+  buildInfractionCommand(),
+  buildInfoCommand(),
 ].map((command) => command.toJSON());
 
 async function registerCommands() {
@@ -114,7 +123,10 @@ function isBenignInteractionError(error) {
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.isAutocomplete()) {
-      const handledAutocomplete = await handleRosterAddAutocomplete(interaction);
+      let handledAutocomplete = await handleRosterAddAutocomplete(interaction);
+      if (handledAutocomplete) return;
+
+      handledAutocomplete = await handleInternalAffairsAutocomplete(interaction);
       if (handledAutocomplete) return;
     }
 
@@ -143,6 +155,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
 
     handled = await handleSyncPromotionsCommand(interaction);
+    if (handled) return;
+
+    handled = await handleInfractionCommand(interaction);
+    if (handled) return;
+
+    handled = await handleInfoCommand(interaction);
     if (handled) return;
 
     if (interaction.isChatInputCommand() && interaction.commandName === "ping") {

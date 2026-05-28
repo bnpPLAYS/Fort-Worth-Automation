@@ -111,11 +111,13 @@ async function processPromotion({ roleplayName, currentCallsign, newRank }) {
   ]);
 
   return {
+    roleplayName,
     previousRank: currentEntry.rank,
     previousCallsign: currentEntry.callsign,
     newRank: openSlot.rank,
     newCallsign: openSlot.callsign,
     rolls: openSlot.rolls,
+    rowNumber: openSlot.rowNumber,
   };
 }
 

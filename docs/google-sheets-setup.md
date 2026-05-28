@@ -108,12 +108,24 @@ For **rank**, start typing — the bot suggests every rank on the sheet that cur
 
 Requires open rows on the sheet for the selected rank.
 
+### Discord ↔ roster links (duplicate RP names)
+
+The bot stores a persistent link for each Discord account in `data/roster-links.json` on the server:
+
+- **Discord user ID** → roleplay name, callsign, sheet row number, rank
+
+Links are created or updated whenever someone is added or synced (`/rosteradd`, cadet enroll, Fast Pass, ride-along pass, promotions, `/refresh-callsign`, `/sync-promotions`, demotions, etc.).
+
+**Mass callsign updates** (`/refresh-callsign`) use this link first, then nickname callsign, so two members with the same RP name (e.g. two **J. Smith** rows) are not mixed up.
+
+Use `/info @member` to see whether an account is linked and which sheet row it points to. If someone is unlinked, run `/rosteradd` or any roster sync that touches them.
+
 ### `/refresh-callsign` (role `1484949625281712281`)
 
 Runs two steps:
 
 1. **Probationary Officer roster fix** — anyone with the PO Discord role who is still on a **cadet** row (or not on a PO row) is moved to the next open **Probationary Officer** slot on the sheet (clears their old cadet row).
-2. **Callsign sync** — members with role `1484951746852818944` get nicknames updated from the sheet. **DMs are sent only** if their callsign or nickname actually changed.
+2. **Callsign sync** — members with role `1484951746852818944` get nicknames updated from the sheet using their **stored Discord link** when needed. **DMs are sent only** if their callsign or nickname actually changed.
 
 Use after bulk callsign changes or when ride-along passes could not move people because no PO slots were open.
 

@@ -19,6 +19,8 @@ const {
   isSheetsConfigured,
   assignMemberToOpenRank,
 } = require("./google-sheets/roster-assign");
+const { getRosterCallsignForMember } = require("./google-sheets/roster-match");
+const { recordMemberRosterLinkFromResult } = require("./roster-member-link");
 
 const PANEL_COMMAND = "-panelfastpass";
 const BUTTON_CUSTOM_ID = "fastpass_apply";
@@ -581,7 +583,7 @@ async function handleInteraction(interaction) {
 
       try {
         rosterResult = await assignMemberToOpenRank(roleplayName, rankLabel, {
-          currentCallsign: extractCallsignFromDisplayName(member.displayName),
+          currentCallsign: getRosterCallsignForMember(member),
         });
         const nicknameResult = await updateMemberCallsign(
           member,
@@ -609,6 +611,8 @@ async function handleInteraction(interaction) {
               : []),
           ],
         });
+
+        recordMemberRosterLinkFromResult(member, rosterResult);
       } catch (error) {
         console.error("Fast Pass roster assignment failed:", error);
         rosterSummary = `\nRoster assignment failed: ${error.message}`;

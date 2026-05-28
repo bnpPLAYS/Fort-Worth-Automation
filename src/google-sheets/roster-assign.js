@@ -9,6 +9,7 @@ const { ranksMatch } = require("../rank-matching");
 const {
   filterEntriesByName,
   resolveEntriesByNameAndCallsign,
+  getRosterCallsignForMember,
 } = require("./roster-match");
 
 function findOpenSlotInRank(entries, newRank) {
@@ -79,6 +80,7 @@ async function assignMemberToOpenRank(roleplayName, newRank, { currentCallsign }
     newRank: openSlot.rank,
     newCallsign: openSlot.callsign,
     rolls: openSlot.rolls,
+    rowNumber: openSlot.rowNumber,
   };
 }
 
@@ -100,6 +102,7 @@ async function assignCadetCallsign(roleplayName, { currentCallsign } = {}) {
     roleplayName,
     rank: openSlot.rank,
     callsign: openSlot.callsign.toUpperCase(),
+    rowNumber: openSlot.rowNumber,
   };
 }
 
@@ -110,11 +113,14 @@ async function clearRosterForName(roleplayName, { currentCallsign } = {}) {
   return existingEntries.length;
 }
 
-async function findRosterEntriesForName(roleplayName, { callsign } = {}) {
+async function findRosterEntriesForName(roleplayName, { callsign, member } = {}) {
   const { entries } = await getRosterRows();
+  const resolvedCallsign = callsign || (member ? getRosterCallsignForMember(member) : null);
 
-  if (callsign) {
-    return resolveEntriesByNameAndCallsign(entries, roleplayName, callsign, { requireUnique: false });
+  if (resolvedCallsign) {
+    return resolveEntriesByNameAndCallsign(entries, roleplayName, resolvedCallsign, {
+      requireUnique: false,
+    });
   }
 
   return filterEntriesByName(entries, roleplayName);

@@ -26,7 +26,11 @@ const {
   resolveRoleplayNameForMember,
   promoteToProbationaryOnRoster,
 } = require("./google-sheets/roster-sync");
-const { getCallsignFromMember } = require("./google-sheets/roster-match");
+const { getRosterCallsignForMember } = require("./google-sheets/roster-match");
+const {
+  recordMemberRosterLinkFromResult,
+  removeMemberRosterLink,
+} = require("./roster-member-link");
 
 const CADET_ENROLL_COOLDOWN_TYPE = "cadet-enroll";
 
@@ -390,7 +394,7 @@ async function executeRideAlongPass(interaction, request, applicant, score) {
   let rosterResult;
   try {
     rosterResult = await promoteToProbationaryOnRoster(roleplayName, {
-      currentCallsign: getCallsignFromMember(applicant),
+      currentCallsign: getRosterCallsignForMember(applicant),
     });
   } catch (error) {
     console.error("Ride-along pass roster assignment failed:", error);
@@ -446,6 +450,8 @@ async function executeRideAlongPass(interaction, request, applicant, score) {
         : [],
   });
 
+  recordMemberRosterLinkFromResult(applicant, rosterResult);
+
   await interaction.editReply(`Marked **Passed** for ${applicant}.\n${staffNote}`);
 }
 
@@ -458,8 +464,9 @@ async function executeRideAlongFail(interaction, request, applicant, score) {
   if (isSheetsConfigured()) {
     try {
       await clearRosterForName(getRoleplayNameFromMember(applicant), {
-        currentCallsign: getCallsignFromMember(applicant),
+        currentCallsign: getRosterCallsignForMember(applicant),
       });
+      removeMemberRosterLink(applicant);
     } catch (error) {
       console.error("Ride-along fail roster clear failed:", error);
     }
@@ -619,7 +626,7 @@ async function handleCadetInteraction(interaction) {
   if (isSheetsConfigured()) {
     try {
       const cadetAssignment = await assignCadetCallsign(roleplayName, {
-        currentCallsign: getCallsignFromMember(member),
+        currentCallsign: getRosterCallsignForMember(member),
       });
       const nicknameResult = await updateMemberCallsign(
         member,
@@ -645,6 +652,8 @@ async function handleCadetInteraction(interaction) {
           ? [`Your Discord nickname is now \`${nicknameResult.nickname}\`.`]
           : [],
       });
+
+      recordMemberRosterLinkFromResult(member, cadetAssignment);
     } catch (error) {
       console.error("Cadet callsign assignment failed:", error);
       reply += `\n\nCould not assign a cadet callsign on the roster: ${error.message}`;

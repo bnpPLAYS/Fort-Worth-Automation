@@ -28,8 +28,6 @@ const {
 } = require("./google-sheets/roster-sync");
 const { getCallsignFromMember } = require("./google-sheets/roster-match");
 
-const RA_COOLDOWN_MS = 15 * 60 * 1000;
-const RA_COOLDOWN_TYPE = "ride-along";
 const CADET_ENROLL_COOLDOWN_TYPE = "cadet-enroll";
 
 const RA_CLAIM_PREFIX = "ra_claim:";
@@ -690,11 +688,6 @@ function parseRideAlongMessage(content) {
   };
 }
 
-function formatCooldownMinutes(remainingMs) {
-  const minutes = Math.ceil(remainingMs / 60000);
-  return minutes <= 1 ? "1 minute" : `${minutes} minutes`;
-}
-
 function buildRideAlongModal() {
   return new ModalBuilder()
     .setCustomId(RIDEALONG_MODAL_ID)
@@ -737,14 +730,6 @@ function buildRideAlongCommand() {
 }
 
 async function submitRideAlongRequest(client, { guild, member, robloxUser, discordUser, availableFor }) {
-  if (isOnCooldown(member.id, RA_COOLDOWN_TYPE)) {
-    const remainingMs = getCooldownRemainingMs(member.id, RA_COOLDOWN_TYPE);
-    return {
-      ok: false,
-      message: `You can only send one ride-along request every **15 minutes**. Try again in **${formatCooldownMinutes(remainingMs)}**.`,
-    };
-  }
-
   const requestChannel = await client.channels.fetch(RA_REQUEST_CHANNEL_ID).catch(() => null);
   if (!requestChannel?.isTextBased()) {
     return {
@@ -804,8 +789,6 @@ async function submitRideAlongRequest(client, { guild, member, robloxUser, disco
 
   request.notificationMessageId = notificationMessage.id;
   request.notificationChannelId = notificationMessage.channel.id;
-
-  setCooldown(member.id, RA_COOLDOWN_MS, RA_COOLDOWN_TYPE);
 
   return {
     ok: true,

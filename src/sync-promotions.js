@@ -58,6 +58,9 @@ async function handleSyncPromotionsCommand(interaction) {
     const links = result.links ?? { linked: [], unchanged: [], noCallsign: [], notOnSheet: [], ambiguous: [] };
 
     const skipped = [
+      ...(links.wrongNicknameFormat ?? []).map(
+        (name) => `${name} (use \`callsign | Name\` nickname format)`,
+      ),
       ...links.noCallsign.map((name) => `${name} (no callsign in nickname)`),
       ...links.notOnSheet.map((name) => `${name} (callsign not on sheet)`),
       ...links.ambiguous.map((name) => `${name} (ambiguous link)`),
@@ -69,9 +72,10 @@ async function handleSyncPromotionsCommand(interaction) {
       .setColor(EMBED_COLOR)
       .setTitle("Promotion roster sync complete")
       .setDescription(
-        `Linked **${links.linked.length}** Discord account(s) from nickname callsigns ` +
-          `(${links.unchanged.length} already linked). ` +
-          `Checked **${result.checked}** member(s) with <@&${ROSTER_SYNC_ROLE_ID}> for rank sync.`,
+        `Only members with <@&${ROSTER_SYNC_ROLE_ID}> and nickname \`callsign | Name\` are processed. ` +
+          `Linked **${links.linked.length}** account(s) (${links.unchanged.length} already linked` +
+          `${links.purged ? `, ${links.purged} stale link(s) removed` : ""}). ` +
+          `Checked **${result.checked}** roster member(s) for rank sync.`,
       )
       .addFields(
         {

@@ -61,8 +61,28 @@ function clearRosterLink(userId) {
   return true;
 }
 
+function purgeRosterLinks(guild, shouldKeepLink) {
+  const links = loadLinks();
+  let removed = 0;
+
+  for (const userId of Object.keys(links)) {
+    const member = guild.members.cache.get(userId);
+    if (!shouldKeepLink(member, userId)) {
+      delete links[userId];
+      removed += 1;
+    }
+  }
+
+  if (removed > 0) {
+    saveLinks(links);
+  }
+
+  return removed;
+}
+
 module.exports = {
   getRosterLink,
   setRosterLink,
   clearRosterLink,
+  purgeRosterLinks,
 };

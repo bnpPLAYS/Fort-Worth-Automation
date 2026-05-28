@@ -1,4 +1,4 @@
-const { MEMBER_ROSTER_ROLE_IDS } = require("./constants");
+const { MEMBER_ROSTER_ROLE_IDS, ROSTER_SYNC_ROLE_ID } = require("./constants");
 const { formatCallsignForDisplay } = require("./discord-callsign");
 
 async function assignMemberRosterRoles(member, reason = "Roster member setup") {
@@ -71,8 +71,15 @@ function mergeRoleIds(...roleIdLists) {
   return [...new Set(roleIdLists.flat().filter(Boolean))];
 }
 
+/** Department roster members eligible for /sync-promotions and /refresh-callsign */
+function hasRosterSyncRole(member) {
+  if (!member || member.user?.bot) return false;
+  return member.roles?.cache?.has(ROSTER_SYNC_ROLE_ID) ?? false;
+}
+
 module.exports = {
   assignMemberRosterRoles,
   sendCallsignDm,
   mergeRoleIds,
+  hasRosterSyncRole,
 };

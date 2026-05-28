@@ -10,7 +10,7 @@ const {
   getRoleplayNameFromMember,
   updateMemberCallsign,
   formatCallsignForDisplay,
-  extractCallsignFromDisplayName,
+  extractDepartmentCallsignFromDisplayName,
 } = require("../discord-callsign");
 const {
   getRosterCallsignForMember,
@@ -19,9 +19,12 @@ const {
   callsignsMatch,
 } = require("./roster-match");
 const { getRosterLink } = require("../roster-links-store");
-const { recordMemberRosterLink } = require("../roster-member-link");
+const {
+  recordMemberRosterLink,
+  purgeRosterLinksWithoutSyncRole,
+} = require("../roster-member-link");
 const { getErrorMessage } = require("../embed-utils");
-const { sendCallsignDm } = require("../member-roster");
+const { sendCallsignDm, hasRosterSyncRole } = require("../member-roster");
 const {
   PROBATIONARY_OFFICER_ROLE_ID,
   ROSTER_SYNC_ROLE_ID,
@@ -82,22 +85,32 @@ async function safeFetchGuildMembers(guild) {
   }
 }
 
+function getRosterSyncMembers(guild) {
+  return guild.members.cache.filter((member) => hasRosterSyncRole(member));
+}
+
 async function linkRosterAccountsFromCallsigns(guild) {
   await safeFetchGuildMembers(guild);
+  const purged = purgeRosterLinksWithoutSyncRole(guild);
 
   const namedEntries = await getNamedRosterEntries();
-  const members = guild.members.cache.filter((member) =>
-    member.roles.cache.has(ROSTER_SYNC_ROLE_ID),
-  );
+  const members = getRosterSyncMembers(guild);
 
   const linked = [];
   const unchanged = [];
   const noCallsign = [];
   const notOnSheet = [];
   const ambiguous = [];
+  const wrongNicknameFormat = [];
 
   for (const member of members.values()) {
-    const callsign = extractCallsignFromDisplayName(member.displayName);
+    const displayName = String(member.displayName ?? "");
+    if (!displayName.includes("|")) {
+      wrongNicknameFormat.push(member.displayName);
+      continue;
+    }
+
+    const callsign = extractDepartmentCallsignFromDisplayName(displayName);
     if (!callsign) {
       noCallsign.push(member.displayName);
       continue;
@@ -147,6 +160,8 @@ async function linkRosterAccountsFromCallsigns(guild) {
     noCallsign,
     notOnSheet,
     ambiguous,
+    wrongNicknameFormat,
+    purged,
     checked: members.size,
   };
 }
@@ -157,8 +172,18 @@ async function promoteToProbationaryOnRoster(roleplayName, { currentCallsign } =
 }
 
 async function syncMemberCallsignFromEntry(member, entry, { dmOnChange = true } = {}) {
+  if (!hasRosterSyncRole(member)) {
+    return {
+      callsign: null,
+      callsignChanged: false,
+      nicknameResult: { ok: false, reason: "Member does not have the department roster role." },
+      dmSent: false,
+      skipped: true,
+    };
+  }
+
   const callsign = formatCallsignForDisplay(entry.callsign);
-  const previousCallsign = extractCallsignFromDisplayName(member.displayName);
+  const previousCallsign = extractDepartmentCallsignFromDisplayName(member.displayName);
   const nicknameResult = await updateMemberCallsign(member, callsign, entry.name);
   const callsignChanged =
     previousCallsign !== callsign || Boolean(nicknameResult.changed);
@@ -246,9 +271,7 @@ async function refreshCallsignsForGuild(guild) {
   await linkRosterAccountsFromCallsigns(guild);
   const entries = await getNamedRosterEntries();
 
-  const members = guild.members.cache.filter((member) =>
-    member.roles.cache.has(ROSTER_SYNC_ROLE_ID),
-  );
+  const members = getRosterSyncMembers(guild);
 
   const updated = [];
   const unchanged = [];
@@ -329,9 +352,7 @@ async function syncPromotionsFromDiscordForGuild(guild) {
   const { entries } = await getRosterRows();
   const orderedRanks = getOrderedRanksFromEntries(entries);
 
-  const members = guild.members.cache.filter((member) =>
-    member.roles.cache.has(ROSTER_SYNC_ROLE_ID),
-  );
+  const members = getRosterSyncMembers(guild);
 
   const updated = [];
   const unchanged = [];
@@ -341,6 +362,11 @@ async function syncPromotionsFromDiscordForGuild(guild) {
 
   for (const member of members.values()) {
     try {
+      if (!extractDepartmentCallsignFromDisplayName(member.displayName)) {
+        notOnSheet.push(`${member.displayName} (nickname must be \`callsign | Name\`)`);
+        continue;
+      }
+
       const discordRank = inferMemberRankFromDiscord(member, orderedRanks);
 
       if (!discordRank) {
@@ -348,23 +374,40 @@ async function syncPromotionsFromDiscordForGuild(guild) {
         continue;
       }
 
-      const roleplayName = await resolveRoleplayNameForMember(member);
-      if (!roleplayName) {
-        notOnSheet.push(`${member.displayName} (no RP name)`);
+      const namedEntries = await getNamedRosterEntries();
+      let sheetEntry = findRosterEntryForMember(namedEntries, member);
+
+      if (!sheetEntry) {
+        const roleplayName = await resolveRoleplayNameForMember(member);
+        if (!roleplayName) {
+          notOnSheet.push(`${member.displayName} (not on roster — use /rosteradd)`);
+          continue;
+        }
+
+        const callsign = getRosterCallsignForMember(member);
+        const sheetEntries = await findRosterEntriesForName(roleplayName, { callsign, member });
+        if (sheetEntries.length === 1) {
+          sheetEntry = sheetEntries[0];
+          recordMemberRosterLink(member, sheetEntry);
+        }
+      }
+
+      if (!sheetEntry) {
+        notOnSheet.push(`${member.displayName} (not on roster — use /rosteradd)`);
         continue;
       }
 
-      const callsign = getRosterCallsignForMember(member);
-      const sheetEntries = await findRosterEntriesForName(roleplayName, { callsign, member });
-      const sheetEntry =
-        sheetEntries.length === 1
-          ? sheetEntries[0]
-          : findRosterEntryForMember(await getNamedRosterEntries(), member);
+      const roleplayName = sheetEntry.name;
 
-      if (sheetEntry && ranksMatch(sheetEntry.rank, discordRank)) {
+      if (ranksMatch(sheetEntry.rank, discordRank)) {
         const syncResult = await syncMemberCallsignFromEntry(member, sheetEntry, {
           dmOnChange: true,
         });
+        if (syncResult.skipped) {
+          failed.push(`${member.displayName}: ${syncResult.nicknameResult.reason}`);
+          continue;
+        }
+
         const label = `${member.displayName} — **${discordRank}** / ${sheetEntry.callsign}`;
         if (syncResult.callsignChanged) {
           updated.push(`${label} (callsign synced)`);
@@ -387,6 +430,11 @@ async function syncPromotionsFromDiscordForGuild(guild) {
         },
         { dmOnChange: true },
       );
+
+      if (syncResult.skipped) {
+        failed.push(`${member.displayName}: ${syncResult.nicknameResult.reason}`);
+        continue;
+      }
 
       updated.push(
         `${member.displayName}: **${rosterResult.previousRank ?? "none"}** / ${rosterResult.previousCallsign ?? "—"} → **${rosterResult.newRank}** / **${rosterResult.newCallsign}**` +

@@ -1,4 +1,5 @@
-const { setRosterLink, clearRosterLink } = require("./roster-links-store");
+const { setRosterLink, clearRosterLink, purgeRosterLinks } = require("./roster-links-store");
+const { hasRosterSyncRole } = require("./member-roster");
 
 function toUserId(memberOrId) {
   if (!memberOrId) return null;
@@ -33,8 +34,13 @@ function removeMemberRosterLink(memberOrId) {
   return clearRosterLink(toUserId(memberOrId));
 }
 
+function purgeRosterLinksWithoutSyncRole(guild) {
+  return purgeRosterLinks(guild, (member) => hasRosterSyncRole(member));
+}
+
 module.exports = {
   recordMemberRosterLink,
   recordMemberRosterLinkFromResult,
   removeMemberRosterLink,
+  purgeRosterLinksWithoutSyncRole,
 };

@@ -1,10 +1,12 @@
 const {
   extractCallsignFromDisplayName,
+  extractDepartmentCallsignFromDisplayName,
   formatCallsignForDisplay,
   getRoleplayNameFromMember,
   callsignsMatch,
 } = require("../discord-callsign");
 const { getRosterLink } = require("../roster-links-store");
+const { hasRosterSyncRole } = require("../member-roster");
 
 function normalizeName(value) {
   return String(value).trim().toLowerCase();
@@ -84,7 +86,7 @@ function findEntryByStoredLink(namedEntries, link) {
 
 function findRosterEntryForMember(entries, member) {
   const namedEntries = entries.filter((entry) => entry.name.length > 0);
-  if (namedEntries.length === 0 || !member) return null;
+  if (namedEntries.length === 0 || !member || !hasRosterSyncRole(member)) return null;
 
   const storedLink = member.id ? getRosterLink(member.id) : null;
   const linkedEntry = findEntryByStoredLink(namedEntries, storedLink);
@@ -92,7 +94,7 @@ function findRosterEntryForMember(entries, member) {
     return linkedEntry;
   }
 
-  const memberCallsign = extractCallsignFromDisplayName(member.displayName);
+  const memberCallsign = extractDepartmentCallsignFromDisplayName(member.displayName);
   const roleplayName = normalizeName(getRoleplayNameFromMember(member));
 
   if (memberCallsign) {
@@ -121,9 +123,11 @@ function getCallsignFromMember(member) {
   return callsign || null;
 }
 
-/** Callsign from nickname, or from the bot's stored Discord ↔ roster link. */
+/** Callsign from department nickname (`3000 | Name`), or from stored link. */
 function getRosterCallsignForMember(member) {
-  const fromNickname = getCallsignFromMember(member);
+  if (!hasRosterSyncRole(member)) return null;
+
+  const fromNickname = extractDepartmentCallsignFromDisplayName(member?.displayName);
   if (fromNickname) return fromNickname;
 
   const link = member?.id ? getRosterLink(member.id) : null;
@@ -131,6 +135,7 @@ function getRosterCallsignForMember(member) {
 }
 
 function getLinkedRoleplayName(member) {
+  if (!hasRosterSyncRole(member)) return null;
   const link = member?.id ? getRosterLink(member.id) : null;
   return link?.roleplayName?.trim() || null;
 }

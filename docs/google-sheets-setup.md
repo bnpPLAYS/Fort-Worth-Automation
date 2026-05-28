@@ -133,12 +133,13 @@ Use after bulk callsign changes or when ride-along passes could not move people 
 
 Run **after Discord promotions** (rank roles updated). For every member with role `1484951746852818944`:
 
-1. **Links** each Discord account to their sheet row using the **callsign in their nickname** (e.g. `3000 | J. Forman` → callsign `3000` on the roster).
-2. Reads their **highest matching rank** from Discord role names (compared to ranks on the sheet, top-to-bottom).
-3. If that rank differs from their row on the Google roster, clears their old row and assigns the next open **callsign** in the new rank.
-4. Updates their Discord nickname and **DMs** them if their callsign changed.
+1. **Only** members with role `1484951746852818944` are processed (not random server members).
+2. **Links** each eligible account to their sheet row using **`callsign | Name`** in their nickname (e.g. `3000 | J. Forman` → callsign `3000` on the roster). Plain numbers in a name without the pipe format are ignored.
+3. Reads their **highest matching rank** from Discord role names (compared to ranks on the sheet, top-to-bottom).
+4. If that rank differs from their row on the Google roster, clears their old row and assigns the next open **callsign** in the new rank.
+5. Updates their Discord nickname and **DMs** them if their callsign changed.
 
-Members need a callsign in their nickname (`3000 | Name`) for linking to work. Use `/info @member` to confirm the link after running this command.
+Members **not on the roster** are skipped (use `/rosteradd` first). Use `/info @member` to confirm the link after running this command.
 
 Requires open roster slots for any new ranks. Rank names on Discord roles must loosely match the sheet (e.g. `FWPD | Lieutenant` matches `LIEUTENANT`).
 

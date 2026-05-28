@@ -33,13 +33,17 @@ function callsignsMatch(sheetCallsign, memberCallsign) {
   );
 }
 
-function extractCallsignFromDisplayName(displayName) {
+function extractCallsignFromDisplayName(displayName, { strict = false } = {}) {
   const text = String(displayName ?? "").trim();
   const prefixMatch = text.match(ANY_CALLSIGN_PREFIX_PATTERN);
   if (prefixMatch) {
     return prefixMatch[1].toUpperCase().startsWith("C-")
       ? formatCallsignForDisplay(prefixMatch[1])
       : normalizeCallsign(prefixMatch[1]);
+  }
+
+  if (strict) {
+    return "";
   }
 
   const cadetMatch = text.match(CADET_CALLSIGN_WORD_PATTERN);
@@ -49,6 +53,11 @@ function extractCallsignFromDisplayName(displayName) {
 
   const wordMatch = text.match(NUMERIC_CALLSIGN_WORD_PATTERN);
   return wordMatch ? normalizeCallsign(wordMatch[1]) : "";
+}
+
+/** Department nickname format only: `3000 | J. Forman` or `C-3 | J. Smith` */
+function extractDepartmentCallsignFromDisplayName(displayName) {
+  return extractCallsignFromDisplayName(displayName, { strict: true });
 }
 
 function getRoleplayNameFromMember(member) {
@@ -125,19 +134,24 @@ async function updateMemberCallsign(member, newCallsign, roleplayName) {
 }
 
 async function findMemberForRosterEntry(guild, { roleplayName, currentCallsign }) {
-  const normalizedCallsign = normalizeCallsign(currentCallsign);
+  const { hasRosterSyncRole } = require("./member-roster");
   const normalizedName = String(roleplayName).trim().toLowerCase();
 
   if (guild.memberCount > guild.members.cache.size) {
     await guild.members.fetch().catch(() => null);
   }
 
-  const byCallsign = guild.members.cache.find((member) =>
-    callsignsMatch(currentCallsign, extractCallsignFromDisplayName(member.displayName)),
-  );
-  if (byCallsign) return byCallsign;
+  const rosterMembers = guild.members.cache.filter((member) => hasRosterSyncRole(member));
 
-  const byName = guild.members.cache.filter((member) => {
+  const byCallsign = rosterMembers.filter((member) =>
+    callsignsMatch(
+      currentCallsign,
+      extractDepartmentCallsignFromDisplayName(member.displayName),
+    ),
+  );
+  if (byCallsign.length === 1) return byCallsign[0];
+
+  const byName = rosterMembers.filter((member) => {
     const display = member.displayName.trim().toLowerCase();
     const afterPipe = display.split("|").pop()?.trim() ?? "";
     return afterPipe === normalizedName;
@@ -150,7 +164,10 @@ async function findMemberForRosterEntry(guild, { roleplayName, currentCallsign }
   if (byName.length > 1 && currentCallsign) {
     return (
       byName.find((member) =>
-        callsignsMatch(currentCallsign, extractCallsignFromDisplayName(member.displayName)),
+        callsignsMatch(
+          currentCallsign,
+          extractDepartmentCallsignFromDisplayName(member.displayName),
+        ),
       ) ?? null
     );
   }
@@ -162,6 +179,7 @@ module.exports = {
   formatCallsignForDisplay,
   callsignsMatch,
   extractCallsignFromDisplayName,
+  extractDepartmentCallsignFromDisplayName,
   getRoleplayNameFromMember,
   buildDisplayNameWithCallsign,
   updateMemberCallsign,

@@ -1,5 +1,6 @@
 const { EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder } = require("discord.js");
 const { EMBED_COLOR, REFRESH_CALLSIGN_ROLE_ID, ROSTER_SYNC_ROLE_ID } = require("./constants");
+const { formatEmbedList, getErrorMessage } = require("./embed-utils");
 const { isSheetsConfigured, getSheetsConfigHelpMessage } = require("./google-sheets/client");
 const {
   fixProbationaryRosterForGuild,
@@ -69,34 +70,28 @@ async function handleRefreshCallsignCommand(interaction) {
       .addFields(
         {
           name: `PO roster moves (${poFix.moved.length})`,
-          value:
-            poFix.moved.length > 0
-              ? poFix.moved.slice(0, 12).join("\n")
-              : `None (${poFix.checked} PO role member(s) checked)`,
+          value: formatEmbedList(poFix.moved, {
+            maxItems: 10,
+            emptyLabel: `None (${poFix.checked} PO role member(s) checked)`,
+          }),
           inline: false,
         },
         {
           name: `Callsign updates (${callsignRefresh.updated.length})`,
-          value:
-            callsignRefresh.updated.length > 0
-              ? callsignRefresh.updated.slice(0, 12).join("\n")
-              : `None (${callsignRefresh.checked} member(s) with <@&${ROSTER_SYNC_ROLE_ID}> checked)`,
+          value: formatEmbedList(callsignRefresh.updated, {
+            maxItems: 10,
+            emptyLabel: `None (${callsignRefresh.checked} member(s) with <@&${ROSTER_SYNC_ROLE_ID}> checked)`,
+          }),
           inline: false,
         },
         {
           name: `Already correct (${callsignRefresh.unchanged.length})`,
-          value:
-            callsignRefresh.unchanged.length > 0
-              ? callsignRefresh.unchanged.slice(0, 8).join("\n")
-              : "None",
+          value: formatEmbedList(callsignRefresh.unchanged, { maxItems: 8 }),
           inline: false,
         },
         {
           name: `Not on sheet (${callsignRefresh.notOnSheet.length})`,
-          value:
-            callsignRefresh.notOnSheet.length > 0
-              ? callsignRefresh.notOnSheet.slice(0, 8).join("\n")
-              : "None",
+          value: formatEmbedList(callsignRefresh.notOnSheet, { maxItems: 8 }),
           inline: false,
         },
       );
@@ -105,7 +100,7 @@ async function handleRefreshCallsignCommand(interaction) {
     if (failures.length > 0) {
       embed.addFields({
         name: `Failed (${failures.length})`,
-        value: failures.slice(0, 10).join("\n"),
+        value: formatEmbedList(failures, { maxItems: 8 }),
         inline: false,
       });
     }
@@ -119,7 +114,7 @@ async function handleRefreshCallsignCommand(interaction) {
     await interaction.editReply({ embeds: [embed] });
   } catch (error) {
     console.error("Refresh callsign failed:", error);
-    await interaction.editReply(`Roster sync failed: ${error.message}`);
+    await interaction.editReply(`Roster sync failed: ${getErrorMessage(error)}`);
   }
 
   return true;

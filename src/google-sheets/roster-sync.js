@@ -12,8 +12,15 @@ const {
   formatCallsignForDisplay,
   extractCallsignFromDisplayName,
 } = require("../discord-callsign");
-const { getRosterCallsignForMember, getLinkedRoleplayName } = require("./roster-match");
+const {
+  getRosterCallsignForMember,
+  getLinkedRoleplayName,
+  normalizeName,
+  callsignsMatch,
+} = require("./roster-match");
+const { getRosterLink } = require("../roster-links-store");
 const { recordMemberRosterLink } = require("../roster-member-link");
+const { getErrorMessage } = require("../embed-utils");
 const { sendCallsignDm } = require("../member-roster");
 const {
   PROBATIONARY_OFFICER_ROLE_ID,
@@ -64,6 +71,86 @@ async function resolveRoleplayNameForMember(member, fallbackName = "") {
   return fromNickname || fallbackName;
 }
 
+async function safeFetchGuildMembers(guild) {
+  try {
+    await guild.members.fetch();
+  } catch (error) {
+    console.warn(
+      "Guild member fetch returned errors; continuing with cached members:",
+      getErrorMessage(error),
+    );
+  }
+}
+
+async function linkRosterAccountsFromCallsigns(guild) {
+  await safeFetchGuildMembers(guild);
+
+  const namedEntries = await getNamedRosterEntries();
+  const members = guild.members.cache.filter((member) =>
+    member.roles.cache.has(ROSTER_SYNC_ROLE_ID),
+  );
+
+  const linked = [];
+  const unchanged = [];
+  const noCallsign = [];
+  const notOnSheet = [];
+  const ambiguous = [];
+
+  for (const member of members.values()) {
+    const callsign = extractCallsignFromDisplayName(member.displayName);
+    if (!callsign) {
+      noCallsign.push(member.displayName);
+      continue;
+    }
+
+    const byCallsign = namedEntries.filter((entry) => callsignsMatch(entry.callsign, callsign));
+
+    if (byCallsign.length === 0) {
+      notOnSheet.push(member.displayName);
+      continue;
+    }
+
+    let entry = byCallsign.length === 1 ? byCallsign[0] : null;
+    if (!entry) {
+      const roleplayName = normalizeName(getRoleplayNameFromMember(member));
+      const narrowed = byCallsign.filter(
+        (sheetEntry) => normalizeName(sheetEntry.name) === roleplayName,
+      );
+      if (narrowed.length === 1) {
+        entry = narrowed[0];
+      } else {
+        ambiguous.push(member.displayName);
+        continue;
+      }
+    }
+
+    const previous = getRosterLink(member.id);
+    recordMemberRosterLink(member, entry);
+
+    const label = `${member.displayName} → **${entry.name}** (${formatCallsignForDisplay(entry.callsign)})`;
+    const sameLink =
+      previous &&
+      previous.rowNumber === entry.rowNumber &&
+      normalizeName(previous.roleplayName) === normalizeName(entry.name) &&
+      callsignsMatch(previous.callsign, entry.callsign);
+
+    if (sameLink) {
+      unchanged.push(label);
+    } else {
+      linked.push(label);
+    }
+  }
+
+  return {
+    linked,
+    unchanged,
+    noCallsign,
+    notOnSheet,
+    ambiguous,
+    checked: members.size,
+  };
+}
+
 async function promoteToProbationaryOnRoster(roleplayName, { currentCallsign } = {}) {
   const probationaryRank = getProbationaryRankName();
   return assignMemberToOpenRank(roleplayName, probationaryRank, { currentCallsign });
@@ -103,7 +190,7 @@ async function syncMemberCallsignFromEntry(member, entry, { dmOnChange = true } 
 
 async function fixProbationaryRosterForGuild(guild) {
   const probationaryRank = getProbationaryRankName();
-  await guild.members.fetch().catch(() => null);
+  await safeFetchGuildMembers(guild);
 
   const members = guild.members.cache.filter((member) =>
     member.roles.cache.has(PROBATIONARY_OFFICER_ROLE_ID),
@@ -156,8 +243,8 @@ async function fixProbationaryRosterForGuild(guild) {
 }
 
 async function refreshCallsignsForGuild(guild) {
+  await linkRosterAccountsFromCallsigns(guild);
   const entries = await getNamedRosterEntries();
-  await guild.members.fetch().catch(() => null);
 
   const members = guild.members.cache.filter((member) =>
     member.roles.cache.has(ROSTER_SYNC_ROLE_ID),
@@ -237,10 +324,10 @@ function inferMemberRankFromDiscord(member, orderedSheetRanks) {
 }
 
 async function syncPromotionsFromDiscordForGuild(guild) {
+  const links = await linkRosterAccountsFromCallsigns(guild);
+
   const { entries } = await getRosterRows();
   const orderedRanks = getOrderedRanksFromEntries(entries);
-
-  await guild.members.fetch().catch(() => null);
 
   const members = guild.members.cache.filter((member) =>
     member.roles.cache.has(ROSTER_SYNC_ROLE_ID),
@@ -296,6 +383,7 @@ async function syncPromotionsFromDiscordForGuild(guild) {
           name: roleplayName,
           callsign: rosterResult.newCallsign,
           rank: rosterResult.newRank,
+          rowNumber: rosterResult.rowNumber,
         },
         { dmOnChange: true },
       );
@@ -317,6 +405,7 @@ async function syncPromotionsFromDiscordForGuild(guild) {
     notOnSheet,
     failed,
     checked: members.size,
+    links,
   };
 }
 
@@ -325,6 +414,8 @@ module.exports = {
   needsProbationaryRosterMove,
   promoteToProbationaryOnRoster,
   syncMemberCallsignFromEntry,
+  safeFetchGuildMembers,
+  linkRosterAccountsFromCallsigns,
   fixProbationaryRosterForGuild,
   refreshCallsignsForGuild,
   getOrderedRanksFromEntries,

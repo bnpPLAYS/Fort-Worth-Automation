@@ -2,6 +2,7 @@ const { EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder } = require("disc
 const { EMBED_COLOR, PROMOTION_SYNC_ROLE_ID, ROSTER_SYNC_ROLE_ID } = require("./constants");
 const { isSheetsConfigured, getSheetsConfigHelpMessage } = require("./google-sheets/client");
 const { syncPromotionsFromDiscordForGuild } = require("./google-sheets/roster-sync");
+const { formatEmbedList, getErrorMessage } = require("./embed-utils");
 
 const COMMAND_NAME = "sync-promotions";
 
@@ -20,7 +21,7 @@ function buildSyncPromotionsCommand() {
   return new SlashCommandBuilder()
     .setName(COMMAND_NAME)
     .setDescription(
-      "After Discord promotions: update the Google roster from members' rank roles and assign new callsigns",
+      "Link accounts from nickname callsigns, then update the Google roster from Discord rank roles",
     );
 }
 
@@ -54,45 +55,43 @@ async function handleSyncPromotionsCommand(interaction) {
 
   try {
     const result = await syncPromotionsFromDiscordForGuild(interaction.guild);
+    const links = result.links ?? { linked: [], unchanged: [], noCallsign: [], notOnSheet: [], ambiguous: [] };
+
+    const skipped = [
+      ...links.noCallsign.map((name) => `${name} (no callsign in nickname)`),
+      ...links.notOnSheet.map((name) => `${name} (callsign not on sheet)`),
+      ...links.ambiguous.map((name) => `${name} (ambiguous link)`),
+      ...result.noRankRole.map((name) => `${name} (no rank role)`),
+      ...result.notOnSheet,
+    ];
 
     const embed = new EmbedBuilder()
       .setColor(EMBED_COLOR)
       .setTitle("Promotion roster sync complete")
       .setDescription(
-        `Compared Discord rank roles to the Google roster for **${result.checked}** member(s) with <@&${ROSTER_SYNC_ROLE_ID}>. ` +
-          "Members whose Discord rank differs from the sheet were moved to an open callsign in that rank. DMs were sent when callsigns changed.",
+        `Linked **${links.linked.length}** Discord account(s) from nickname callsigns ` +
+          `(${links.unchanged.length} already linked). ` +
+          `Checked **${result.checked}** member(s) with <@&${ROSTER_SYNC_ROLE_ID}> for rank sync.`,
       )
       .addFields(
         {
+          name: `Newly linked (${links.linked.length})`,
+          value: formatEmbedList(links.linked, { maxItems: 10, maxLength: 900 }),
+          inline: false,
+        },
+        {
           name: `Roster updated (${result.updated.length})`,
-          value:
-            result.updated.length > 0
-              ? result.updated.slice(0, 12).join("\n")
-              : "None",
+          value: formatEmbedList(result.updated, { maxItems: 10, maxLength: 900 }),
           inline: false,
         },
         {
           name: `Already matched (${result.unchanged.length})`,
-          value:
-            result.unchanged.length > 0
-              ? result.unchanged.slice(0, 10).join("\n")
-              : "None",
+          value: formatEmbedList(result.unchanged, { maxItems: 8, maxLength: 900 }),
           inline: false,
         },
         {
-          name: `No rank role found (${result.noRankRole.length})`,
-          value:
-            result.noRankRole.length > 0
-              ? result.noRankRole.slice(0, 10).join("\n")
-              : "None",
-          inline: false,
-        },
-        {
-          name: `Could not resolve name (${result.notOnSheet.length})`,
-          value:
-            result.notOnSheet.length > 0
-              ? result.notOnSheet.slice(0, 10).join("\n")
-              : "None",
+          name: `Skipped (${skipped.length})`,
+          value: formatEmbedList(skipped, { maxItems: 10, maxLength: 900 }),
           inline: false,
         },
       );
@@ -100,19 +99,15 @@ async function handleSyncPromotionsCommand(interaction) {
     if (result.failed.length > 0) {
       embed.addFields({
         name: `Failed (${result.failed.length})`,
-        value: result.failed.slice(0, 10).join("\n"),
+        value: formatEmbedList(result.failed, { maxItems: 8, maxLength: 900 }),
         inline: false,
       });
-    }
-
-    if (result.updated.length > 12) {
-      embed.setFooter({ text: `${result.updated.length - 12} more updates not shown` });
     }
 
     await interaction.editReply({ embeds: [embed] });
   } catch (error) {
     console.error("Sync promotions failed:", error);
-    await interaction.editReply(`Promotion roster sync failed: ${error.message}`);
+    await interaction.editReply(`Promotion roster sync failed: ${getErrorMessage(error)}`);
   }
 
   return true;

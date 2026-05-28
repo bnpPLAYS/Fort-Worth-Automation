@@ -74,7 +74,7 @@ When someone clicks **Become Cadet**, the bot assigns the next open `C-N` slot a
 Cadets request ride-alongs with **`/ridealong`** in the ride-along request channel (modal: Roblox username, Discord username, availability). Staff with roles `1484950025472704643` or `1484950653045440532` see **Claim**, **Pass**, and **Fail** in the employee notification channel.
 
 1. **Claim** — take charge of the ride-along; pings the applicant with station instructions (blocky avatar, no unrealistic accessories)
-2. **Start Ride Along** — only the claimer; requires a **screenshot reply** to the staff notification (you + your cadet) before start; supervision reminder; **30-minute** ping to end
+2. **Start Ride Along** — only the claimer; opens a popup to **upload a screenshot** of you and your cadet; supervision reminder; **30-minute** ping to end
 3. **Notes** — only the claimer, while the ride-along is in progress; add observations anytime
 4. **End Ride Along** — shows all notes, then **Submit Score** (1–10, decimals allowed)
 5. **Pass** — score **7.5** or higher; PO roster move, roles, nickname, DM

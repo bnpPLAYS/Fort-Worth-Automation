@@ -3,6 +3,8 @@ const {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  FileUploadBuilder,
+  LabelBuilder,
   ModalBuilder,
   PermissionFlagsBits,
   SlashCommandBuilder,
@@ -32,6 +34,8 @@ const CADET_ENROLL_COOLDOWN_TYPE = "cadet-enroll";
 
 const RA_CLAIM_PREFIX = "ra_claim:";
 const RA_START_PREFIX = "ra_start:";
+const RA_START_MODAL_PREFIX = "ra_start_modal:";
+const RA_SCREENSHOT_UPLOAD_ID = "ridealong_screenshot";
 const RA_NOTES_PREFIX = "ra_notes:";
 const RA_END_PREFIX = "ra_end:";
 const RA_SCORE_BUTTON_PREFIX = "ra_score_btn:";
@@ -86,56 +90,64 @@ function isImageAttachment(attachment) {
   return /\.(png|jpe?g|gif|webp|bmp)$/i.test(attachment.name ?? "");
 }
 
-async function findRideAlongScreenshotMessage(client, request, userId) {
-  if (!request.notificationChannelId || !request.notificationMessageId) {
+function buildRideAlongStartModal(requestId) {
+  const fileUpload = new FileUploadBuilder()
+    .setCustomId(RA_SCREENSHOT_UPLOAD_ID)
+    .setRequired(true)
+    .setMinValues(1)
+    .setMaxValues(1);
+
+  const label = new LabelBuilder()
+    .setLabel("Screenshot of you and your cadet")
+    .setDescription("Upload a screenshot showing you and the cadet together before the ride-along begins.")
+    .setFileUploadComponent(fileUpload);
+
+  return new ModalBuilder()
+    .setCustomId(`${RA_START_MODAL_PREFIX}${requestId}`)
+    .setTitle("Start Ride-Along")
+    .addLabelComponents(label);
+}
+
+function getUploadedScreenshotFromModal(interaction) {
+  const files = interaction.fields.getUploadedFiles(RA_SCREENSHOT_UPLOAD_ID);
+
+  if (!files || files.size === 0) {
     return {
       ok: false,
-      message: "Staff notification not found for this ride-along request.",
+      message: "Please upload a screenshot of you and your cadet.",
     };
   }
 
-  const channel = await client.channels.fetch(request.notificationChannelId).catch(() => null);
-  if (!channel?.isTextBased()) {
+  const attachment = files.first();
+
+  if (!isImageAttachment(attachment)) {
     return {
       ok: false,
-      message: "Could not access the staff notification channel.",
+      message: "The upload must be an image file (PNG, JPG, GIF, or WebP).",
     };
   }
-
-  const recentMessages = await channel.messages
-    .fetch({ limit: 100, after: request.notificationMessageId })
-    .catch(() => null);
-
-  if (!recentMessages) {
-    return {
-      ok: false,
-      message: "Could not read messages in the staff notification channel.",
-    };
-  }
-
-  const screenshotMessage = recentMessages.find((message) => {
-    if (message.author.id !== userId) return false;
-    if (message.reference?.messageId !== request.notificationMessageId) return false;
-    return message.attachments.some((attachment) => isImageAttachment(attachment));
-  });
-
-  if (!screenshotMessage) {
-    const notificationLink = `https://discord.com/channels/${request.guildId}/${request.notificationChannelId}/${request.notificationMessageId}`;
-    return {
-      ok: false,
-      message:
-        "Before starting, **reply to the ride-along notification** in this channel with a **screenshot of you and your cadet**.\n\n" +
-        `[Jump to notification message](${notificationLink})`,
-    };
-  }
-
-  const attachment = screenshotMessage.attachments.find((item) => isImageAttachment(item));
 
   return {
     ok: true,
-    messageId: screenshotMessage.id,
-    url: attachment?.url ?? null,
+    url: attachment.url,
+    attachmentId: attachment.id,
   };
+}
+
+async function completeRideAlongStart(interaction, request) {
+  request.startedById = interaction.user.id;
+  request.startedAt = Date.now();
+  if (!request.notes) request.notes = [];
+  scheduleRideAlongEndReminder(interaction.client, request);
+  await updateRideAlongNotification(interaction.client, request);
+
+  await interaction.editReply({
+    content:
+      "**Ride-along started.**\n\n" +
+      "Remember to **supervise your cadet at all times** and ensure they meet our standards.\n\n" +
+      "Use **Notes** during the ride-along, then click **End Ride Along** when finished to review notes and submit a score.\n\n" +
+      "You will be pinged here in **30 minutes** as a reminder to end the ride-along.",
+  });
 }
 
 function buildRideAlongEmbed(request) {
@@ -172,7 +184,6 @@ function buildRideAlongEmbed(request) {
 
   if (request.screenshotUrl) {
     embed.setImage(request.screenshotUrl);
-    embed.addFields({ name: "Start Screenshot", value: "[View upload](https://discord.com/channels/" + `${request.guildId}/${request.notificationChannelId}/${request.screenshotMessageId})`, inline: false });
   }
 
   const noteCount = request.notes?.length ?? 0;
@@ -913,6 +924,42 @@ function getRideAlongRequestIdFromCustomId(prefix, customId) {
 
 async function handleRideAlongInteraction(interaction) {
   if (interaction.isModalSubmit()) {
+    if (interaction.customId.startsWith(RA_START_MODAL_PREFIX)) {
+      const requestId = getRideAlongRequestIdFromCustomId(RA_START_MODAL_PREFIX, interaction.customId);
+      const request = getRideAlongRequest(requestId);
+
+      if (!request || request.status === "passed" || request.status === "failed") {
+        await interaction.reply({ content: "This ride-along is no longer active.", ephemeral: true });
+        return true;
+      }
+
+      if (request.claimedById !== interaction.user.id) {
+        await interaction.reply({
+          content: "Only the staff member who claimed this ride-along can start it.",
+          ephemeral: true,
+        });
+        return true;
+      }
+
+      if (request.startedById) {
+        await interaction.reply({ content: "This ride-along has already been started.", ephemeral: true });
+        return true;
+      }
+
+      const screenshot = getUploadedScreenshotFromModal(interaction);
+      if (!screenshot.ok) {
+        await interaction.reply({ content: screenshot.message, ephemeral: true });
+        return true;
+      }
+
+      request.screenshotUrl = screenshot.url;
+      request.screenshotAttachmentId = screenshot.attachmentId;
+
+      await interaction.deferReply({ ephemeral: true });
+      await completeRideAlongStart(interaction, request);
+      return true;
+    }
+
     if (interaction.customId.startsWith(RA_NOTES_MODAL_PREFIX)) {
       const requestId = getRideAlongRequestIdFromCustomId(RA_NOTES_MODAL_PREFIX, interaction.customId);
       const request = getRideAlongRequest(requestId);
@@ -1169,7 +1216,7 @@ async function handleRideAlongInteraction(interaction) {
     await interaction.reply({
       content:
         "You claimed this ride-along. The applicant has been notified.\n\n" +
-        "Before you click **Start Ride Along**, **reply to the ride-along notification above** in this channel with a **screenshot of you and your cadet**.",
+        "Click **Start Ride Along** when you begin — you will be prompted to **upload a screenshot** of you and your cadet.",
       ephemeral: true,
     });
     return true;
@@ -1189,33 +1236,7 @@ async function handleRideAlongInteraction(interaction) {
       return true;
     }
 
-    const screenshot = await findRideAlongScreenshotMessage(
-      interaction.client,
-      request,
-      interaction.user.id,
-    );
-
-    if (!screenshot.ok) {
-      await interaction.reply({ content: screenshot.message, ephemeral: true });
-      return true;
-    }
-
-    request.startedById = interaction.user.id;
-    request.startedAt = Date.now();
-    request.screenshotMessageId = screenshot.messageId;
-    request.screenshotUrl = screenshot.url;
-    if (!request.notes) request.notes = [];
-    scheduleRideAlongEndReminder(interaction.client, request);
-    await updateRideAlongNotification(interaction.client, request);
-
-    await interaction.reply({
-      content:
-        "**Ride-along started.**\n\n" +
-        "Remember to **supervise your cadet at all times** and ensure they meet our standards.\n\n" +
-        "Use **Notes** during the ride-along, then click **End Ride Along** when finished to review notes and submit a score.\n\n" +
-        "You will be pinged here in **30 minutes** as a reminder to end the ride-along.",
-      ephemeral: true,
-    });
+    await interaction.showModal(buildRideAlongStartModal(requestId));
     return true;
   }
 

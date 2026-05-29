@@ -1,4 +1,5 @@
 const path = require("path");
+const fs = require("fs");
 const {
   ActionRowBuilder,
   AttachmentBuilder,
@@ -9,6 +10,7 @@ const {
 } = require("discord.js");
 const { EMBED_COLOR } = require("./constants");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
+const { getErrorMessage } = require("./embed-utils");
 
 const RESOURCES_COMMAND = "-hpdresources";
 
@@ -49,40 +51,64 @@ const RESOURCE_LINKS = [
 ];
 
 function buildResourceButtonRows() {
-  return RESOURCE_LINKS.map((resource) =>
-    new ActionRowBuilder().addComponents(
+  const rows = [];
+  let currentRow = new ActionRowBuilder();
+
+  for (const resource of RESOURCE_LINKS) {
+    if (currentRow.components.length >= 5) {
+      rows.push(currentRow);
+      currentRow = new ActionRowBuilder();
+    }
+
+    currentRow.addComponents(
       new ButtonBuilder()
         .setLabel(resource.buttonLabel)
         .setStyle(ButtonStyle.Link)
         .setURL(resource.url),
-    ),
-  );
+    );
+  }
+
+  if (currentRow.components.length > 0) {
+    rows.push(currentRow);
+  }
+
+  return rows;
 }
 
 function buildHpdResourcesPayload() {
-  const bannerEmbed = new EmbedBuilder()
-    .setColor(EMBED_COLOR)
-    .setImage(`attachment://${BANNER_FILENAME}`);
+  const embeds = [];
+  const files = [];
 
-  const mainEmbed = new EmbedBuilder()
-    .setColor(EMBED_COLOR)
-    .setTitle("Houston Police Department")
-    .setDescription(
-      "> All Houston Police Department policies and regulations are housed in this section. " +
-        "Personnel are expected to remain in compliance with all department standards at all times.",
-    )
-    .addFields(
-      RESOURCE_LINKS.map((resource) => ({
-        name: resource.fieldName,
-        value: "\u200b",
-        inline: false,
-      })),
+  if (fs.existsSync(BANNER_PATH)) {
+    embeds.push(
+      new EmbedBuilder()
+        .setColor(EMBED_COLOR)
+        .setImage(`attachment://${BANNER_FILENAME}`),
     );
+    files.push(new AttachmentBuilder(BANNER_PATH, { name: BANNER_FILENAME }));
+  }
+
+  embeds.push(
+    new EmbedBuilder()
+      .setColor(EMBED_COLOR)
+      .setTitle("Houston Police Department")
+      .setDescription(
+        "> All Houston Police Department policies and regulations are housed in this section. " +
+          "Personnel are expected to remain in compliance with all department standards at all times.",
+      )
+      .addFields(
+        RESOURCE_LINKS.map((resource) => ({
+          name: resource.fieldName,
+          value: "\u200b",
+          inline: false,
+        })),
+      ),
+  );
 
   return {
-    embeds: [bannerEmbed, mainEmbed],
+    embeds,
     components: buildResourceButtonRows(),
-    files: [new AttachmentBuilder(BANNER_PATH, { name: BANNER_FILENAME })],
+    files,
   };
 }
 
@@ -91,18 +117,26 @@ async function handleHpdResourcesCommand(message) {
   if (message.author.bot) return false;
 
   if (hasProcessed(`panel:${message.id}`)) return true;
-  markProcessed(`panel:${message.id}`);
 
   if (!message.member?.permissions?.has(PermissionFlagsBits.ManageGuild)) {
     await message.reply("You need **Manage Server** permission to post the Houston resources panel.");
     return true;
   }
 
-  if (message.deletable) {
-    await message.delete().catch(() => {});
+  try {
+    if (message.deletable) {
+      await message.delete().catch(() => {});
+    }
+
+    await message.channel.send(buildHpdResourcesPayload());
+    markProcessed(`panel:${message.id}`);
+  } catch (error) {
+    console.error("HPD resources panel failed:", error);
+    await message.channel
+      .send(`Failed to post the Houston resources panel: ${getErrorMessage(error)}`)
+      .catch(() => null);
   }
 
-  await message.channel.send(buildHpdResourcesPayload());
   return true;
 }
 

@@ -5,7 +5,8 @@ const {
   ButtonBuilder,
   ButtonStyle,
   ContainerBuilder,
-  FileBuilder,
+  MediaGalleryBuilder,
+  MediaGalleryItemBuilder,
   MessageFlags,
   PermissionFlagsBits,
   SectionBuilder,
@@ -69,14 +70,18 @@ function buildResourceSection(resource) {
     );
 }
 
+function buildImageGallery(filename) {
+  return new MediaGalleryBuilder().addItems(
+    new MediaGalleryItemBuilder().setURL(`attachment://${filename}`),
+  );
+}
+
 function buildHpdResourcesPayload() {
   const files = [];
   const container = new ContainerBuilder().setAccentColor(EMBED_COLOR);
 
   if (fs.existsSync(BANNER_PATH)) {
-    container.addFileComponents(
-      new FileBuilder().setURL(`attachment://${BANNER_FILENAME}`),
-    );
+    container.addMediaGalleryComponents(buildImageGallery(BANNER_FILENAME));
     files.push(new AttachmentBuilder(BANNER_PATH, { name: BANNER_FILENAME }));
   }
 
@@ -96,9 +101,7 @@ function buildHpdResourcesPayload() {
 
   if (fs.existsSync(FOOTER_PATH)) {
     container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
-    container.addFileComponents(
-      new FileBuilder().setURL(`attachment://${FOOTER_FILENAME}`),
-    );
+    container.addMediaGalleryComponents(buildImageGallery(FOOTER_FILENAME));
     files.push(new AttachmentBuilder(FOOTER_PATH, { name: FOOTER_FILENAME }));
   }
 

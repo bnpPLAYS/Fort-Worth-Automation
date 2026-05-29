@@ -1,12 +1,16 @@
 const path = require("path");
 const fs = require("fs");
 const {
-  ActionRowBuilder,
   AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
+  ContainerBuilder,
+  FileBuilder,
+  MessageFlags,
   PermissionFlagsBits,
+  SectionBuilder,
+  SeparatorBuilder,
+  TextDisplayBuilder,
 } = require("discord.js");
 const { EMBED_COLOR } = require("./constants");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
@@ -15,7 +19,9 @@ const { getErrorMessage } = require("./embed-utils");
 const RESOURCES_COMMAND = "-hpdresources";
 
 const BANNER_FILENAME = "hpd-dashboard-banner.png";
+const FOOTER_FILENAME = "hpd-dashboard-footer.png";
 const BANNER_PATH = path.join(__dirname, "..", "assets", BANNER_FILENAME);
+const FOOTER_PATH = path.join(__dirname, "..", "assets", FOOTER_FILENAME);
 
 const RESOURCE_LINKS = [
   {
@@ -50,64 +56,55 @@ const RESOURCE_LINKS = [
   },
 ];
 
-function buildResourceButtonRows() {
-  const rows = [];
-  let currentRow = new ActionRowBuilder();
-
-  for (const resource of RESOURCE_LINKS) {
-    if (currentRow.components.length >= 5) {
-      rows.push(currentRow);
-      currentRow = new ActionRowBuilder();
-    }
-
-    currentRow.addComponents(
+function buildResourceSection(resource) {
+  return new SectionBuilder()
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(`**${resource.fieldName}**`),
+    )
+    .setButtonAccessory(
       new ButtonBuilder()
         .setLabel(resource.buttonLabel)
         .setStyle(ButtonStyle.Link)
         .setURL(resource.url),
     );
-  }
-
-  if (currentRow.components.length > 0) {
-    rows.push(currentRow);
-  }
-
-  return rows;
 }
 
 function buildHpdResourcesPayload() {
-  const embeds = [];
   const files = [];
+  const container = new ContainerBuilder().setAccentColor(EMBED_COLOR);
 
   if (fs.existsSync(BANNER_PATH)) {
-    embeds.push(
-      new EmbedBuilder()
-        .setColor(EMBED_COLOR)
-        .setImage(`attachment://${BANNER_FILENAME}`),
+    container.addFileComponents(
+      new FileBuilder().setURL(`attachment://${BANNER_FILENAME}`),
     );
     files.push(new AttachmentBuilder(BANNER_PATH, { name: BANNER_FILENAME }));
   }
 
-  embeds.push(
-    new EmbedBuilder()
-      .setColor(EMBED_COLOR)
-      .setTitle("Houston Police Department")
-      .setDescription(
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      "## Houston Police Department\n\n" +
         "> All Houston Police Department policies and regulations are housed in this section. " +
-          "Personnel are expected to remain in compliance with all department standards at all times.",
-      )
-      .addFields(
-        RESOURCE_LINKS.map((resource) => ({
-          name: resource.fieldName,
-          value: "\u200b",
-          inline: false,
-        })),
-      ),
+        "Personnel are expected to remain in compliance with all department standards at all times.",
+    ),
   );
 
+  container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+
+  for (const resource of RESOURCE_LINKS) {
+    container.addSectionComponents(buildResourceSection(resource));
+  }
+
+  if (fs.existsSync(FOOTER_PATH)) {
+    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+    container.addFileComponents(
+      new FileBuilder().setURL(`attachment://${FOOTER_FILENAME}`),
+    );
+    files.push(new AttachmentBuilder(FOOTER_PATH, { name: FOOTER_FILENAME }));
+  }
+
   return {
-    embeds,
-    components: buildResourceButtonRows(),
+    flags: MessageFlags.IsComponentsV2,
+    components: [container],
     files,
   };
 }

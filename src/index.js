@@ -33,6 +33,7 @@ const {
   handleInfoCommand,
 } = require("./internal-affairs");
 const { handleHpdDashboardCommand } = require("./hpd-dashboard");
+const { handleHpdResourcesCommand } = require("./hpd-resources");
 const {
   handleSupportPanelCommand,
   handleStaffPanelCommand,
@@ -102,6 +103,7 @@ client.on(Events.MessageCreate, async (message) => {
     await handlePanelCommand(message);
     await handleCadetPanelCommand(message);
     await handleHpdDashboardCommand(message);
+    await handleHpdResourcesCommand(message);
     await handleSupportPanelCommand(message);
     await handleSupportMessage(message);
     await handleRideAlongMessage(message);

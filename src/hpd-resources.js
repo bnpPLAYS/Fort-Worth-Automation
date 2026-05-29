@@ -1,28 +1,20 @@
-const path = require("path");
-const fs = require("fs");
 const {
-  AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ContainerBuilder,
-  MediaGalleryBuilder,
-  MediaGalleryItemBuilder,
-  MessageFlags,
   PermissionFlagsBits,
   SectionBuilder,
   SeparatorBuilder,
   TextDisplayBuilder,
 } = require("discord.js");
-const { EMBED_COLOR } = require("./constants");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { getErrorMessage } = require("./embed-utils");
+const {
+  createHpdContainer,
+  appendHpdFooter,
+  buildHpdComponentsPayload,
+} = require("./hpd-components");
 
 const RESOURCES_COMMAND = "-hpdresources";
-
-const BANNER_FILENAME = "hpd-dashboard-banner.png";
-const FOOTER_FILENAME = "hpd-dashboard-footer.png";
-const BANNER_PATH = path.join(__dirname, "..", "assets", BANNER_FILENAME);
-const FOOTER_PATH = path.join(__dirname, "..", "assets", FOOTER_FILENAME);
 
 const RESOURCE_LINKS = [
   {
@@ -70,20 +62,8 @@ function buildResourceSection(resource) {
     );
 }
 
-function buildImageGallery(filename) {
-  return new MediaGalleryBuilder().addItems(
-    new MediaGalleryItemBuilder().setURL(`attachment://${filename}`),
-  );
-}
-
 function buildHpdResourcesPayload() {
-  const files = [];
-  const container = new ContainerBuilder().setAccentColor(EMBED_COLOR);
-
-  if (fs.existsSync(BANNER_PATH)) {
-    container.addMediaGalleryComponents(buildImageGallery(BANNER_FILENAME));
-    files.push(new AttachmentBuilder(BANNER_PATH, { name: BANNER_FILENAME }));
-  }
+  const { container, files } = createHpdContainer();
 
   container.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
@@ -99,17 +79,9 @@ function buildHpdResourcesPayload() {
     container.addSectionComponents(buildResourceSection(resource));
   }
 
-  if (fs.existsSync(FOOTER_PATH)) {
-    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
-    container.addMediaGalleryComponents(buildImageGallery(FOOTER_FILENAME));
-    files.push(new AttachmentBuilder(FOOTER_PATH, { name: FOOTER_FILENAME }));
-  }
+  appendHpdFooter(container, files);
 
-  return {
-    flags: MessageFlags.IsComponentsV2,
-    components: [container],
-    files,
-  };
+  return buildHpdComponentsPayload(container, files);
 }
 
 async function handleHpdResourcesCommand(message) {

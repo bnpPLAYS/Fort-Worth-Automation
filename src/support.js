@@ -7,17 +7,26 @@ const {
   EmbedBuilder,
   ModalBuilder,
   PermissionFlagsBits,
+  SeparatorBuilder,
+  TextDisplayBuilder,
   TextInputBuilder,
   TextInputStyle,
   UserSelectMenuBuilder,
 } = require("discord.js");
-const path = require("path");
 const { buildPanelEmbed, buildPanelButton } = require("./fastpass");
 const { getTicket, saveTicket, deleteTicket, resolveOpenTicket } = require("./tickets-store");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { EMBED_COLOR } = require("./constants");
 const { closeTicket } = require("./transcripts");
+const { getErrorMessage } = require("./embed-utils");
 const { TYPE_SUPERVISOR_EXAM_ID, handleSupervisorExamInteraction } = require("./supervisor-exam");
+const {
+  BANNER_FILENAME,
+  createHpdContainer,
+  appendHpdFooter,
+  buildHpdComponentsPayload,
+  getHpdBannerAttachment,
+} = require("./hpd-components");
 
 const SUPPORT_PANEL_COMMAND = "-supportpanel";
 
@@ -37,9 +46,6 @@ const REPORT_CATEGORY_ID = "1485029849855824113";
 const OTHER_CATEGORY_ID = "1485029796697342032";
 const ADVANCED_CATEGORY_ID = "1485030429848240188";
 const STAFF_ROLE_ID = "1484950025472704643";
-
-const BANNER_FILENAME = "assistance-banner.png";
-const BANNER_PATH = path.join(__dirname, "..", "assets", BANNER_FILENAME);
 
 const pendingReports = new Map();
 
@@ -102,35 +108,42 @@ function isStaff(member) {
 }
 
 function getBannerAttachment() {
-  return new AttachmentBuilder(BANNER_PATH, { name: BANNER_FILENAME });
+  return getHpdBannerAttachment();
+}
+
+function getTicketBannerFiles() {
+  const banner = getBannerAttachment();
+  return banner ? [banner] : [];
 }
 
 function withTicketBanner(embed) {
+  if (!BANNER_FILENAME) return embed;
   return embed.setImage(`attachment://${BANNER_FILENAME}`);
 }
 
-function buildAssistanceHubEmbed() {
-  return new EmbedBuilder()
-    .setColor(EMBED_COLOR)
-    .setDescription(
-      "# Assistance Hub\n\n" +
-        "Click **Contact Support** below to open a ticket or application.\n\n" +
-        "**Available options:**\n" +
-        "• **Other** — General support tickets\n" +
-        "• **Fast Pass** — Department Fast Pass application\n" +
-        "• **Report** — Report a member or officer\n" +
-        "• **Supervisor Exam** — Supervisor promotion exam",
-    )
-    .setImage(`attachment://${BANNER_FILENAME}`)
-    .setFooter({ text: "Fort Worth Police Department" });
+function buildAssistanceHubContent() {
+  return (
+    "## Houston Police Department — Assistance Hub\n\n" +
+    "Click **Contact Support** below to open a ticket or application.\n\n" +
+    "**Available options:**\n" +
+    "• **Other** — General support tickets\n" +
+    "• **Fast Pass** — Department Fast Pass application\n" +
+    "• **Report** — Report a member or officer\n" +
+    "• **Supervisor Exam** — Supervisor promotion exam"
+  );
 }
 
 function buildAssistanceHubPayload() {
-  return {
-    embeds: [buildAssistanceHubEmbed()],
-    components: [buildContactSupportButton()],
-    files: [new AttachmentBuilder(BANNER_PATH, { name: BANNER_FILENAME })],
-  };
+  const { container, files } = createHpdContainer();
+
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(buildAssistanceHubContent()),
+  );
+  container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+  container.addActionRowComponents(buildContactSupportButton());
+  appendHpdFooter(container, files);
+
+  return buildHpdComponentsPayload(container, files);
 }
 
 function buildContactSupportButton() {
@@ -285,7 +298,7 @@ async function createReportTicket(interaction, reportedUser, whatHappened) {
   await channel.send({
     content: `${opener}`,
     embeds: [buildInternalAffairsEmbed(opener, reportedUser, whatHappened)],
-    files: [getBannerAttachment()],
+    files: getTicketBannerFiles(),
   });
   await channel.send(
     "Please **link any clips or evidence** you have regarding this incident. Staff will be notified once you send a message in this channel.",
@@ -329,7 +342,7 @@ async function createOtherTicket(interaction) {
   await channel.send({
     content: `@here ${opener}`,
     embeds: [buildGeneralSupportEmbed(opener)],
-    files: [getBannerAttachment()],
+    files: getTicketBannerFiles(),
     allowedMentions: { parse: ["everyone", "users"] },
   });
 
@@ -352,7 +365,14 @@ async function handleSupportPanelCommand(message) {
     await message.delete().catch(() => {});
   }
 
-  await message.channel.send(buildAssistanceHubPayload());
+  try {
+    await message.channel.send(buildAssistanceHubPayload());
+  } catch (error) {
+    console.error("Assistance hub panel failed:", error);
+    await message.channel
+      .send(`Failed to post the Assistance Hub: ${getErrorMessage(error)}`)
+      .catch(() => null);
+  }
 
   return true;
 }

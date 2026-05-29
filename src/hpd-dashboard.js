@@ -1,26 +1,26 @@
-const path = require("path");
 const {
   ActionRowBuilder,
-  AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
   PermissionFlagsBits,
+  SeparatorBuilder,
+  TextDisplayBuilder,
 } = require("discord.js");
-const { EMBED_COLOR } = require("./constants");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
+const { getErrorMessage } = require("./embed-utils");
+const {
+  createHpdContainer,
+  appendHpdFooter,
+  buildHpdComponentsPayload,
+} = require("./hpd-components");
 
 const DASHBOARD_COMMAND = "-hpddashboard";
 const CADET_ENROLL_BUTTON_ID = "cadet_enroll";
 const FASTPASS_BUTTON_ID = "fastpass_apply";
 
-const BANNER_FILENAME = "hpd-dashboard-banner.png";
-const FOOTER_FILENAME = "hpd-dashboard-footer.png";
-const BANNER_PATH = path.join(__dirname, "..", "assets", BANNER_FILENAME);
-const FOOTER_PATH = path.join(__dirname, "..", "assets", FOOTER_FILENAME);
-
-function buildDashboardDescription() {
+function buildDashboardContent() {
   return (
+    "## Houston Police Department Dashboard\n\n" +
     "> **Service with Respect, Dedicated to Protect.**\n\n" +
     "> Welcome to the **Houston Police Department!** In this dashboard you will be able to find all important information regarding the Houston Police Department.\n\n" +
     "`Frequently Asked Questions`\n\n" +
@@ -30,7 +30,7 @@ function buildDashboardDescription() {
   );
 }
 
-function buildDashboardButtons() {
+function buildDashboardButtonRow() {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(CADET_ENROLL_BUTTON_ID)
@@ -44,27 +44,16 @@ function buildDashboardButtons() {
 }
 
 function buildHpdDashboardPayload() {
-  const bannerEmbed = new EmbedBuilder()
-    .setColor(EMBED_COLOR)
-    .setImage(`attachment://${BANNER_FILENAME}`);
+  const { container, files } = createHpdContainer();
 
-  const mainEmbed = new EmbedBuilder()
-    .setColor(EMBED_COLOR)
-    .setTitle("Houston Police Department Dashboard")
-    .setDescription(buildDashboardDescription());
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(buildDashboardContent()),
+  );
+  container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+  container.addActionRowComponents(buildDashboardButtonRow());
+  appendHpdFooter(container, files);
 
-  const footerEmbed = new EmbedBuilder()
-    .setColor(EMBED_COLOR)
-    .setImage(`attachment://${FOOTER_FILENAME}`);
-
-  return {
-    embeds: [bannerEmbed, mainEmbed, footerEmbed],
-    components: [buildDashboardButtons()],
-    files: [
-      new AttachmentBuilder(BANNER_PATH, { name: BANNER_FILENAME }),
-      new AttachmentBuilder(FOOTER_PATH, { name: FOOTER_FILENAME }),
-    ],
-  };
+  return buildHpdComponentsPayload(container, files);
 }
 
 async function handleHpdDashboardCommand(message) {
@@ -72,18 +61,26 @@ async function handleHpdDashboardCommand(message) {
   if (message.author.bot) return false;
 
   if (hasProcessed(`panel:${message.id}`)) return true;
-  markProcessed(`panel:${message.id}`);
 
   if (!message.member?.permissions?.has(PermissionFlagsBits.ManageGuild)) {
     await message.reply("You need **Manage Server** permission to post the Houston dashboard.");
     return true;
   }
 
-  if (message.deletable) {
-    await message.delete().catch(() => {});
+  try {
+    if (message.deletable) {
+      await message.delete().catch(() => {});
+    }
+
+    await message.channel.send(buildHpdDashboardPayload());
+    markProcessed(`panel:${message.id}`);
+  } catch (error) {
+    console.error("HPD dashboard failed:", error);
+    await message.channel
+      .send(`Failed to post the Houston dashboard: ${getErrorMessage(error)}`)
+      .catch(() => null);
   }
 
-  await message.channel.send(buildHpdDashboardPayload());
   return true;
 }
 

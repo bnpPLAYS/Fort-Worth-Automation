@@ -15,6 +15,7 @@ const {
   handleCadetInteraction,
   handleRideAlongMessage,
   handleRideAlongInteraction,
+  restoreRideAlongReminders,
 } = require("./cadet");
 const { handlePromotionMessage } = require("./promotion-handler");
 const { handleRosterCheckCommand } = require("./roster-check");
@@ -97,6 +98,7 @@ async function registerCommands() {
 client.once(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
   console.log(`Fast Pass Part 2 minimum: ${MIN_WORDS} words per answer`);
+  restoreRideAlongReminders(readyClient);
 });
 
 client.on(Events.MessageCreate, async (message) => {

@@ -31,6 +31,11 @@ const {
   recordMemberRosterLinkFromResult,
   removeMemberRosterLink,
 } = require("./roster-member-link");
+const {
+  getRideAlongRequest,
+  saveRideAlongRequest,
+  listActiveRideAlongRequests,
+} = require("./ride-along-store");
 
 const CADET_ENROLL_COOLDOWN_TYPE = "cadet-enroll";
 
@@ -60,7 +65,135 @@ const RA_REQUEST_CHANNEL_ID = "1501730869961031770";
 const RA_NOTIFICATION_CHANNEL_ID = "1509320569852661891";
 const RA_PING_ROLE_IDS = RA_STAFF_ROLE_IDS;
 
-const rideAlongRequests = new Map();
+const rideAlongReminderTimeouts = new Map();
+
+function persistRideAlongRequest(request) {
+  if (!request?.requestId) return;
+  saveRideAlongRequest(request.requestId, request);
+}
+
+function walkMessageComponents(components, matches = []) {
+  for (const component of components ?? []) {
+    if (component.customId) {
+      matches.push(component);
+    }
+    if (component.components?.length) {
+      walkMessageComponents(component.components, matches);
+    }
+  }
+  return matches;
+}
+
+function extractTextFromMessageComponents(components) {
+  const parts = [];
+
+  for (const component of components ?? []) {
+    const content = component.content ?? component.data?.content;
+    if (content) {
+      parts.push(content);
+    }
+    if (component.components?.length) {
+      parts.push(extractTextFromMessageComponents(component.components));
+    }
+  }
+
+  return parts.filter(Boolean).join("\n");
+}
+
+function parseRideAlongField(text, fieldName) {
+  const pattern = new RegExp(`\\*\\*${fieldName}\\*\\*\\n([^\\n*]+)`, "i");
+  return text.match(pattern)?.[1]?.trim() ?? "";
+}
+
+function parseRideAlongRequestFromText(text, { requestId, requestUrl, guildId }) {
+  const applicantId = text.match(/<@(\d+)>/)?.[1];
+  if (!applicantId) return null;
+
+  const claimedById = text.match(/\*\*Claimed By\*\*\n<@(\d+)>/i)?.[1] ?? null;
+  const startedById = text.match(/\*\*Ride-Along Started\*\*\n<@(\d+)>/i)?.[1] ?? null;
+
+  return {
+    requestId,
+    applicantId,
+    applicantTag: "",
+    guildId,
+    requestUrl,
+    roleplayName: parseRideAlongField(text, "Roster Name") || undefined,
+    robloxUser: parseRideAlongField(text, "Roblox User"),
+    discordUser: parseRideAlongField(text, "Discord User"),
+    availableFor: parseRideAlongField(text, "Available For"),
+    status: "pending",
+    claimedById,
+    startedById,
+    startedAt: startedById ? Date.now() : null,
+    notes: [],
+    score: null,
+    resolvedById: null,
+  };
+}
+
+async function findRideAlongNotificationMessage(client, requestId) {
+  const notificationChannel = await client.channels
+    .fetch(RA_NOTIFICATION_CHANNEL_ID)
+    .catch(() => null);
+
+  if (!notificationChannel?.isTextBased()) return null;
+
+  const claimCustomId = `${RA_CLAIM_PREFIX}${requestId}`;
+  const messages = await notificationChannel.messages.fetch({ limit: 50 }).catch(() => null);
+  if (!messages) return null;
+
+  for (const message of messages.values()) {
+    const buttons = walkMessageComponents(message.components);
+    if (buttons.some((component) => component.customId === claimCustomId)) {
+      return message;
+    }
+  }
+
+  return null;
+}
+
+async function recoverRideAlongRequest(client, requestId) {
+  const requestChannel = await client.channels.fetch(RA_REQUEST_CHANNEL_ID).catch(() => null);
+  const requestMessage = await requestChannel?.messages.fetch(requestId).catch(() => null);
+  if (!requestMessage) return null;
+
+  const text = extractTextFromMessageComponents(requestMessage.components);
+  const request = parseRideAlongRequestFromText(text, {
+    requestId,
+    requestUrl: requestMessage.url,
+    guildId: requestMessage.guildId,
+  });
+
+  if (!request) return null;
+
+  const notificationMessage = await findRideAlongNotificationMessage(client, requestId);
+  if (notificationMessage) {
+    request.notificationMessageId = notificationMessage.id;
+    request.notificationChannelId = notificationMessage.channel.id;
+  }
+
+  return request;
+}
+
+async function resolveRideAlongRequest(client, requestId) {
+  const existing = getRideAlongRequest(requestId);
+  if (existing) return existing;
+
+  const recovered = await recoverRideAlongRequest(client, requestId);
+  if (recovered) {
+    persistRideAlongRequest(recovered);
+  }
+  return recovered;
+}
+
+function restoreRideAlongReminders(client) {
+  for (const request of listActiveRideAlongRequests()) {
+    if (request.startedById && !rideAlongReminderTimeouts.has(request.requestId)) {
+      scheduleRideAlongEndReminder(client, request);
+    }
+  }
+}
 
 function canManageRideAlong(member) {
   return RA_STAFF_ROLE_IDS.some((roleId) => member?.roles?.cache?.has(roleId));
@@ -77,10 +210,6 @@ function formatCooldownDuration(remainingMs) {
     return hours === 1 ? "1 hour" : `${hours} hours`;
   }
   return totalMinutes <= 1 ? "1 minute" : `${totalMinutes} minutes`;
-}
-
-function getRideAlongRequest(requestId) {
-  return rideAlongRequests.get(requestId) ?? null;
 }
 
 function isImageAttachment(attachment) {
@@ -141,6 +270,7 @@ async function completeRideAlongStart(interaction, request) {
   request.startedAt = Date.now();
   if (!request.notes) request.notes = [];
   scheduleRideAlongEndReminder(interaction.client, request);
+  persistRideAlongRequest(request);
   await updateRideAlongNotification(interaction.client, request);
 
   await interaction.editReply({
@@ -228,17 +358,18 @@ function buildRideAlongEmbed(request) {
 }
 
 function clearRideAlongEndReminder(request) {
-  if (request.endReminderTimeout) {
-    clearTimeout(request.endReminderTimeout);
-    request.endReminderTimeout = null;
+  const timeout = rideAlongReminderTimeouts.get(request.requestId);
+  if (timeout) {
+    clearTimeout(timeout);
+    rideAlongReminderTimeouts.delete(request.requestId);
   }
 }
 
 function scheduleRideAlongEndReminder(client, request) {
   clearRideAlongEndReminder(request);
 
-  request.endReminderTimeout = setTimeout(async () => {
-    request.endReminderTimeout = null;
+  const timeout = setTimeout(async () => {
+    rideAlongReminderTimeouts.delete(request.requestId);
 
     if (request.status === "passed" || request.status === "failed" || !request.startedById) {
       return;
@@ -258,6 +389,8 @@ function scheduleRideAlongEndReminder(client, request) {
         console.error("Failed to send ride-along end reminder:", error);
       });
   }, RIDEALONG_DURATION_MS);
+
+  rideAlongReminderTimeouts.set(request.requestId, timeout);
 }
 
 function formatRideAlongNotes(request) {
@@ -434,6 +567,7 @@ async function executeRideAlongPass(interaction, request, applicant, score) {
   request.rosterRank = rosterResult.newRank;
   request.roleplayName = roleplayName;
   clearRideAlongEndReminder(request);
+  persistRideAlongRequest(request);
   await updateRideAlongNotification(interaction.client, request);
 
   let staffNote =
@@ -484,6 +618,7 @@ async function executeRideAlongFail(interaction, request, applicant, score) {
   request.status = "failed";
   request.resolvedById = interaction.user.id;
   clearRideAlongEndReminder(request);
+  persistRideAlongRequest(request);
   await updateRideAlongNotification(interaction.client, request);
 
   await applicant.user
@@ -798,7 +933,7 @@ async function submitRideAlongRequest(client, { guild, member, robloxUser, disco
 
   request.requestId = requestMessage.id;
   request.requestUrl = requestMessage.url;
-  rideAlongRequests.set(request.requestId, request);
+  persistRideAlongRequest(request);
 
   const rolePings = RA_PING_ROLE_IDS.map((id) => `<@&${id}>`).join(" ");
   const notificationMessage = await notificationChannel.send(
@@ -811,6 +946,7 @@ async function submitRideAlongRequest(client, { guild, member, robloxUser, disco
 
   request.notificationMessageId = notificationMessage.id;
   request.notificationChannelId = notificationMessage.channel.id;
+  persistRideAlongRequest(request);
 
   return {
     ok: true,
@@ -933,7 +1069,7 @@ async function handleRideAlongInteraction(interaction) {
   if (interaction.isModalSubmit()) {
     if (interaction.customId.startsWith(RA_START_MODAL_PREFIX)) {
       const requestId = getRideAlongRequestIdFromCustomId(RA_START_MODAL_PREFIX, interaction.customId);
-      const request = getRideAlongRequest(requestId);
+      const request = await resolveRideAlongRequest(interaction.client, requestId);
 
       if (!request || request.status === "passed" || request.status === "failed") {
         await interaction.reply({ content: "This ride-along is no longer active.", ephemeral: true });
@@ -962,6 +1098,7 @@ async function handleRideAlongInteraction(interaction) {
       request.screenshotUrl = screenshot.url;
       request.screenshotAttachmentId = screenshot.attachmentId;
 
+      persistRideAlongRequest(request);
       await interaction.deferReply({ ephemeral: true });
       await completeRideAlongStart(interaction, request);
       return true;
@@ -969,7 +1106,7 @@ async function handleRideAlongInteraction(interaction) {
 
     if (interaction.customId.startsWith(RA_NOTES_MODAL_PREFIX)) {
       const requestId = getRideAlongRequestIdFromCustomId(RA_NOTES_MODAL_PREFIX, interaction.customId);
-      const request = getRideAlongRequest(requestId);
+      const request = await resolveRideAlongRequest(interaction.client, requestId);
 
       if (!request || request.status === "passed" || request.status === "failed") {
         await interaction.reply({ content: "This ride-along is no longer active.", ephemeral: true });
@@ -1005,6 +1142,7 @@ async function handleRideAlongInteraction(interaction) {
         authorId: interaction.user.id,
       });
 
+      persistRideAlongRequest(request);
       await updateRideAlongNotification(interaction.client, request);
       await interaction.reply({
         content: `Note **#${request.notes.length}** saved. You have **${request.notes.length}** note(s) on this ride-along.`,
@@ -1015,7 +1153,7 @@ async function handleRideAlongInteraction(interaction) {
 
     if (interaction.customId.startsWith(RA_SCORE_MODAL_PREFIX)) {
       const requestId = getRideAlongRequestIdFromCustomId(RA_SCORE_MODAL_PREFIX, interaction.customId);
-      const request = getRideAlongRequest(requestId);
+      const request = await resolveRideAlongRequest(interaction.client, requestId);
 
       if (!request || request.status === "passed" || request.status === "failed") {
         await interaction.reply({ content: "This ride-along is no longer active.", ephemeral: true });
@@ -1039,6 +1177,7 @@ async function handleRideAlongInteraction(interaction) {
       }
 
       request.score = score;
+      persistRideAlongRequest(request);
 
       await interaction.deferReply({ ephemeral: true });
 
@@ -1068,7 +1207,7 @@ async function handleRideAlongInteraction(interaction) {
 
   if (interaction.customId.startsWith(RA_SCORE_BUTTON_PREFIX)) {
     const requestId = getRideAlongRequestIdFromCustomId(RA_SCORE_BUTTON_PREFIX, interaction.customId);
-    const request = getRideAlongRequest(requestId);
+    const request = await resolveRideAlongRequest(interaction.client, requestId);
 
     if (!request || request.status === "passed" || request.status === "failed") {
       await interaction.reply({ content: "This ride-along is no longer active.", ephemeral: true });
@@ -1114,7 +1253,7 @@ async function handleRideAlongInteraction(interaction) {
     return true;
   }
 
-  const request = getRideAlongRequest(requestId);
+  const request = await resolveRideAlongRequest(interaction.client, requestId);
   if (!request) {
     await interaction.reply({
       content: "This ride-along request is no longer active.",
@@ -1182,6 +1321,7 @@ async function handleRideAlongInteraction(interaction) {
     }
 
     request.claimedById = interaction.user.id;
+    persistRideAlongRequest(request);
     await updateRideAlongNotification(interaction.client, request);
 
     const claimNotice =
@@ -1253,4 +1393,5 @@ module.exports = {
   handleCadetInteraction,
   handleRideAlongMessage,
   handleRideAlongInteraction,
+  restoreRideAlongReminders,
 };

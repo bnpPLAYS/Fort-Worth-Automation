@@ -59,11 +59,13 @@ function buildRespondersBlock(responders) {
   return `**Responders (${responders.length})**\n${lines.join("\n")}`;
 }
 
-function buildMassShiftBody(startedAt, responders) {
+function buildMassShiftBody(startedAt, responders, { includePing = false } = {}) {
   const timeLabel = formatShiftTime(new Date(startedAt));
   const footerTime = formatShiftFooterTime(new Date(startedAt));
+  const pingLine = includePing ? `<@&${ROSTER_SYNC_ROLE_ID}>\n\n` : "";
 
   return (
+    pingLine +
     "## Mass Shift\n\n" +
     `A *mass shift* is now in effect, as of \`${timeLabel}\`. All online **Houston Police Officers** are required to get in-game!\n\n` +
     "### 📋 Steps\n" +
@@ -87,11 +89,13 @@ function buildRespondButtonRow() {
   );
 }
 
-function buildMassShiftContainer(shift) {
+function buildMassShiftContainer(shift, { includePing = false } = {}) {
   const { container, files } = createHpdContainer();
 
   container.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(buildMassShiftBody(shift.startedAt, shift.responders)),
+    new TextDisplayBuilder().setContent(
+      buildMassShiftBody(shift.startedAt, shift.responders, { includePing }),
+    ),
   );
   container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
   container.addActionRowComponents(buildRespondButtonRow());
@@ -101,8 +105,11 @@ function buildMassShiftContainer(shift) {
 }
 
 function buildMassShiftPayload(shift) {
-  const { container, files } = buildMassShiftContainer(shift);
-  return buildHpdComponentsPayload(container, files);
+  const { container, files } = buildMassShiftContainer(shift, { includePing: true });
+  return {
+    allowedMentions: { roles: [ROSTER_SYNC_ROLE_ID] },
+    ...buildHpdComponentsPayload(container, files),
+  };
 }
 
 function buildMassShiftEditPayload(shift) {
@@ -134,11 +141,7 @@ async function handleMassShiftCommand(message) {
       responders: [],
     };
 
-    const sent = await message.channel.send({
-      content: `<@&${ROSTER_SYNC_ROLE_ID}>`,
-      allowedMentions: { roles: [ROSTER_SYNC_ROLE_ID] },
-      ...buildMassShiftPayload(shift),
-    });
+    const sent = await message.channel.send(buildMassShiftPayload(shift));
 
     saveMassShift(sent.id, shift);
     markProcessed(`panel:${message.id}`);

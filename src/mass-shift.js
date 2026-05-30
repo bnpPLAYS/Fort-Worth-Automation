@@ -113,8 +113,8 @@ function buildMassShiftPayload(shift) {
 }
 
 function buildMassShiftEditPayload(shift) {
-  const { container } = buildMassShiftContainer(shift);
-  return buildHpdComponentsPayload(container, []);
+  const { container, files } = buildMassShiftContainer(shift);
+  return buildHpdComponentsPayload(container, files);
 }
 
 async function handleMassShiftCommand(message) {

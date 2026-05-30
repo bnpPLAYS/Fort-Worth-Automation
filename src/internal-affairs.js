@@ -1,12 +1,11 @@
 const {
-  EmbedBuilder,
   PermissionFlagsBits,
   SlashCommandBuilder,
 } = require("discord.js");
 const {
-  EMBED_COLOR,
   INFRACTION_ROLE_ID,
   IA_RELEASE_CHANNEL_ID,
+  HPD_EMOJI,
   ROSTER_SYNC_ROLE_ID,
   MEMBER_ROSTER_ROLE_IDS,
 } = require("./constants");
@@ -38,6 +37,7 @@ const {
   resolveRoleplayNameForMember,
 } = require("./google-sheets/roster-sync");
 const { addInfraction, getInfractionsForUser } = require("./infractions-store");
+const { buildV2Payload } = require("./v2-message");
 
 const INFRACTION_COMMAND = "infraction";
 const INFO_COMMAND = "info";
@@ -108,7 +108,6 @@ async function getMemberRankDisplay(member) {
 }
 
 function buildIAReleaseMessage({ rankLabel, userId, type, reason, newRank }) {
-  const header = "**:FWPD: | Internal Affairs Release**";
   const mention = `<@${userId}>`;
   let body;
 
@@ -134,7 +133,11 @@ function buildIAReleaseMessage({ rankLabel, userId, type, reason, newRank }) {
       body = `${rankLabel}, ${mention} — **${type}** for, **${reason}**.`;
   }
 
-  return `${header}\n\n${body}`;
+  return buildV2Payload({
+    title: `${HPD_EMOJI} | Internal Affairs Release`,
+    description: body,
+    allowedMentions: { users: [userId] },
+  });
 }
 
 async function sendInfractionDm(targetUser, { type, reason, rankLabel, rosterResult }) {
@@ -514,68 +517,59 @@ async function handleInfoCommand(interaction) {
       }
     }
 
-    const embed = new EmbedBuilder()
-      .setColor(EMBED_COLOR)
-      .setTitle(`Member info — ${targetUser.tag}`)
-      .setThumbnail(targetUser.displayAvatarURL({ size: 256 }))
-      .addFields(
-        {
-          name: "Discord",
-          value: `${targetUser} (\`${targetUser.id}\`)`,
-          inline: false,
-        },
-        {
-          name: "Roleplay name",
-          value: rosterEntry?.name ?? roleplayNameFromDiscord ?? "Unknown",
-          inline: true,
-        },
-        {
-          name: "Callsign",
-          value: rosterEntry?.callsign
-            ? formatCallsignForDisplay(rosterEntry.callsign)
-            : callsignFromDiscord
-              ? formatCallsignForDisplay(callsignFromDiscord)
-              : "None",
-          inline: true,
-        },
-        {
-          name: "Roster rank",
-          value: rosterEntry?.rank ?? "Not on roster",
-          inline: true,
-        },
-        {
-          name: "Discord rank",
-          value: discordRank,
-          inline: true,
-        },
-        {
-          name: "Discord ↔ roster link",
-          value: rosterLink
-            ? `**${rosterLink.roleplayName}** · ${formatCallsignForDisplay(rosterLink.callsign)}` +
-              (rosterLink.rowNumber ? ` · sheet row ${rosterLink.rowNumber}` : "")
-            : "Not linked — use `/rosteradd` or any roster sync to link this account",
-          inline: false,
-        },
-        {
-          name: `Infractions (${infractions.length})`,
-          value: formatInfractionHistory(infractions).slice(0, 1024),
-          inline: false,
-        },
-      );
+    const fields = [
+      {
+        name: "Discord",
+        value: `${targetUser} (\`${targetUser.id}\`)`,
+      },
+      {
+        name: "Roleplay name",
+        value: rosterEntry?.name ?? roleplayNameFromDiscord ?? "Unknown",
+      },
+      {
+        name: "Callsign",
+        value: rosterEntry?.callsign
+          ? formatCallsignForDisplay(rosterEntry.callsign)
+          : callsignFromDiscord
+            ? formatCallsignForDisplay(callsignFromDiscord)
+            : "None",
+      },
+      {
+        name: "Roster rank",
+        value: rosterEntry?.rank ?? "Not on roster",
+      },
+      {
+        name: "Discord rank",
+        value: discordRank,
+      },
+      {
+        name: "Discord ↔ roster link",
+        value: rosterLink
+          ? `**${rosterLink.roleplayName}** · ${formatCallsignForDisplay(rosterLink.callsign)}` +
+            (rosterLink.rowNumber ? ` · sheet row ${rosterLink.rowNumber}` : "")
+          : "Not linked — use `/rosteradd` or any roster sync to link this account",
+      },
+      {
+        name: `Infractions (${infractions.length})`,
+        value: formatInfractionHistory(infractions).slice(0, 1024),
+      },
+      ...(rosterEntry?.rolls
+        ? [{ name: "Rolls", value: String(rosterEntry.rolls).slice(0, 1024) }]
+        : []),
+    ];
 
-    if (rosterEntry?.rolls) {
-      embed.addFields({
-        name: "Rolls",
-        value: String(rosterEntry.rolls).slice(0, 1024),
-        inline: false,
-      });
-    }
-
-    if (!isSheetsConfigured()) {
-      embed.setFooter({ text: "Google Sheets is not configured — roster fields may be incomplete." });
-    }
-
-    await interaction.editReply({ embeds: [embed] });
+    await interaction.editReply(
+      buildV2Payload({
+        title: `Member info — ${targetUser.tag}`,
+        fields,
+        footer: !isSheetsConfigured()
+          ? "Google Sheets is not configured — roster fields may be incomplete."
+          : undefined,
+        imageUrls: [targetUser.displayAvatarURL({ size: 256 })],
+        ephemeral: true,
+        includeFiles: false,
+      }),
+    );
   } catch (error) {
     console.error("Info command failed:", error);
     await interaction.editReply({

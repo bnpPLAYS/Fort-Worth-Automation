@@ -2,7 +2,6 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
   FileUploadBuilder,
   LabelBuilder,
   ModalBuilder,
@@ -11,7 +10,8 @@ const {
   TextInputBuilder,
   TextInputStyle,
 } = require("discord.js");
-const { EMBED_COLOR, RA_STAFF_ROLE_IDS, PROBATIONARY_OFFICER_ROLE_ID, CADET_ENROLL_COOLDOWN_MS } = require("./constants");
+const { RA_STAFF_ROLE_IDS, PROBATIONARY_OFFICER_ROLE_ID, CADET_ENROLL_COOLDOWN_MS } = require("./constants");
+const { buildV2Payload, buildV2EditPayload } = require("./v2-message");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { isOnCooldown, setCooldown, getCooldownRemainingMs } = require("./cooldowns");
 const { getRoleplayNameFromMember, updateMemberCallsign } = require("./discord-callsign");
@@ -152,71 +152,79 @@ async function completeRideAlongStart(interaction, request) {
   });
 }
 
-function buildRideAlongEmbed(request) {
-  const embed = new EmbedBuilder()
-    .setColor(EMBED_COLOR)
-    .setTitle("Ride-Along Request")
-    .setDescription(`Submitted by <@${request.applicantId}> in <#${RA_REQUEST_CHANNEL_ID}>`)
-    .addFields(
-      { name: "Roblox User", value: request.robloxUser, inline: true },
-      { name: "Discord User", value: request.discordUser, inline: true },
-      { name: "Available For", value: request.availableFor, inline: false },
-    )
-    .setURL(request.requestUrl);
+function buildRideAlongPayload(
+  request,
+  { headerText, actionRows, forEdit = false, allowedMentions } = {},
+) {
+  const title =
+    request.status === "passed"
+      ? "Ride-Along — Passed"
+      : request.status === "failed"
+        ? "Ride-Along — Failed"
+        : "Ride-Along Request";
+
+  let description = headerText ? `${headerText}\n\n` : "";
+  description +=
+    `Submitted by <@${request.applicantId}> in <#${RA_REQUEST_CHANNEL_ID}>` +
+    (request.requestUrl ? `\n[View request](${request.requestUrl})` : "");
+
+  const fields = [
+    { name: "Roblox User", value: request.robloxUser },
+    { name: "Discord User", value: request.discordUser },
+    { name: "Available For", value: request.availableFor },
+  ];
 
   if (request.roleplayName) {
-    embed.addFields({ name: "Roster Name", value: request.roleplayName, inline: true });
+    fields.push({ name: "Roster Name", value: request.roleplayName });
   }
 
   if (request.claimedById) {
-    embed.addFields({
-      name: "Claimed By",
-      value: `<@${request.claimedById}>`,
-      inline: true,
-    });
+    fields.push({ name: "Claimed By", value: `<@${request.claimedById}>` });
   }
 
   if (request.startedById) {
-    embed.addFields({
-      name: "Ride-Along Started",
-      value: `<@${request.startedById}>`,
-      inline: true,
-    });
-  }
-
-  if (request.screenshotUrl) {
-    embed.setImage(request.screenshotUrl);
+    fields.push({ name: "Ride-Along Started", value: `<@${request.startedById}>` });
   }
 
   const noteCount = request.notes?.length ?? 0;
   if (noteCount > 0) {
-    embed.addFields({ name: "Notes", value: `${noteCount} note(s) recorded`, inline: true });
+    fields.push({ name: "Notes", value: `${noteCount} note(s) recorded` });
   }
 
   if (request.score != null) {
-    embed.addFields({ name: "Score", value: `${request.score}/10`, inline: true });
+    fields.push({ name: "Score", value: `${request.score}/10` });
   }
 
   if (request.status === "passed") {
-    embed.setTitle("Ride-Along — Passed");
-    embed.addFields({ name: "Result", value: `Passed by <@${request.resolvedById}>`, inline: false });
+    fields.push({ name: "Result", value: `Passed by <@${request.resolvedById}>` });
     if (request.rosterCallsign) {
-      embed.addFields({
+      fields.push({
         name: "Assigned Callsign",
         value: `**${request.rosterCallsign}** (${request.rosterRank ?? "Probationary Officer"})`,
-        inline: false,
       });
     }
   } else if (request.status === "failed") {
-    embed.setTitle("Ride-Along — Failed");
     const failReason =
       request.score != null && request.score < RIDEALONG_PASSING_SCORE
         ? `Failed by <@${request.resolvedById}> (score **${request.score}/10** — below **${RIDEALONG_PASSING_SCORE}**)`
         : `Failed by <@${request.resolvedById}>`;
-    embed.addFields({ name: "Result", value: failReason, inline: false });
+    fields.push({ name: "Result", value: failReason });
   }
 
-  return embed;
+  const builder = forEdit ? buildV2EditPayload : buildV2Payload;
+
+  return builder({
+    title,
+    description,
+    fields,
+    imageUrls: request.screenshotUrl ? [request.screenshotUrl] : [],
+    actionRows: actionRows ?? [],
+    allowedMentions,
+  });
+}
+
+function buildRideAlongEmbed(request) {
+  return buildRideAlongPayload(request);
 }
 
 function clearRideAlongEndReminder(request) {
@@ -314,27 +322,28 @@ function buildRideAlongScoreModal(requestId) {
 }
 
 function buildRideAlongEndReviewPayload(request) {
-  const embed = new EmbedBuilder()
-    .setColor(EMBED_COLOR)
-    .setTitle("End Ride-Along — Review Notes")
-    .setDescription(
+  return buildV2Payload({
+    title: "End Ride-Along — Review Notes",
+    description:
       "Review your notes below, then submit a score out of 10.\n\n" +
-        `**Passing score:** ${RIDEALONG_PASSING_SCORE} or higher`,
-    )
-    .addFields({
-      name: "Your Notes",
-      value: truncateEmbedField(formatRideAlongNotes(request)),
-      inline: false,
-    });
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`${RA_SCORE_BUTTON_PREFIX}${request.requestId}`)
-      .setLabel("Submit Score")
-      .setStyle(ButtonStyle.Primary),
-  );
-
-  return { embeds: [embed], components: [row] };
+      `**Passing score:** ${RIDEALONG_PASSING_SCORE} or higher`,
+    fields: [
+      {
+        name: "Your Notes",
+        value: truncateEmbedField(formatRideAlongNotes(request)),
+      },
+    ],
+    actionRows: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`${RA_SCORE_BUTTON_PREFIX}${request.requestId}`)
+          .setLabel("Submit Score")
+          .setStyle(ButtonStyle.Primary),
+      ),
+    ],
+    ephemeral: true,
+    includeFiles: false,
+  });
 }
 
 function buildRideAlongButtons(request) {
@@ -490,17 +499,21 @@ async function executeRideAlongFail(interaction, request, applicant, score) {
   );
 }
 
+function buildCadetPanelPayload() {
+  return buildV2Payload({
+    title: "Become a Cadet",
+    description:
+      "Click the button below to receive your **Cadet** roles and begin the ride-along process.\n\n" +
+      "You will be asked for your **full roleplay name** (e.g. John Smith). The roster will list you as **J. Smith**.\n\n" +
+      "After enrolling, you must complete **2 ride-alongs** before you can become a **Probationary Officer**.\n\n" +
+      `When you are ready, go to <#${RA_REQUEST_CHANNEL_ID}> and run **/ridealong** to request a ride-along.`,
+    footer: "Fort Worth Police Department",
+    actionRows: [buildCadetEnrollButton()],
+  });
+}
+
 function buildCadetPanelEmbed() {
-  return new EmbedBuilder()
-    .setColor(EMBED_COLOR)
-    .setDescription(
-      "# Become a Cadet\n\n" +
-        "Click the button below to receive your **Cadet** roles and begin the ride-along process.\n\n" +
-        "You will be asked for your **full roleplay name** (e.g. John Smith). The roster will list you as **J. Smith**.\n\n" +
-        "After enrolling, you must complete **2 ride-alongs** before you can become a **Probationary Officer**.\n\n" +
-        `When you are ready, go to <#${RA_REQUEST_CHANNEL_ID}> and run **/ridealong** to request a ride-along.`,
-    )
-    .setFooter({ text: "Fort Worth Police Department" });
+  return buildCadetPanelPayload();
 }
 
 function buildCadetEnrollButton() {
@@ -528,10 +541,7 @@ async function handleCadetPanelCommand(message) {
     await message.delete().catch(() => {});
   }
 
-  await message.channel.send({
-    embeds: [buildCadetPanelEmbed()],
-    components: [buildCadetEnrollButton()],
-  });
+  await message.channel.send(buildCadetPanelPayload());
 
   return true;
 }
@@ -779,22 +789,25 @@ async function submitRideAlongRequest(client, { guild, member, robloxUser, disco
     resolvedById: null,
   };
 
-  const requestMessage = await requestChannel.send({
-    content: `<@${member.id}> submitted a **ride-along request**.`,
-    embeds: [buildRideAlongEmbed(request)],
-  });
+  const requestMessage = await requestChannel.send(
+    buildRideAlongPayload(request, {
+      headerText: `<@${member.id}> submitted a **ride-along request**.`,
+      allowedMentions: { users: [member.id] },
+    }),
+  );
 
   request.requestId = requestMessage.id;
   request.requestUrl = requestMessage.url;
   rideAlongRequests.set(request.requestId, request);
 
   const rolePings = RA_PING_ROLE_IDS.map((id) => `<@&${id}>`).join(" ");
-  const notificationMessage = await notificationChannel.send({
-    content: `${rolePings}\n\nA **ride-along request** is pending.\n[Jump to request](${requestMessage.url})`,
-    embeds: [buildRideAlongEmbed(request)],
-    components: buildRideAlongButtons(request),
-    allowedMentions: { roles: RA_PING_ROLE_IDS },
-  });
+  const notificationMessage = await notificationChannel.send(
+    buildRideAlongPayload(request, {
+      headerText: `${rolePings}\n\nA **ride-along request** is pending.\n[Jump to request](${requestMessage.url})`,
+      actionRows: buildRideAlongButtons(request),
+      allowedMentions: { roles: RA_PING_ROLE_IDS },
+    }),
+  );
 
   request.notificationMessageId = notificationMessage.id;
   request.notificationChannelId = notificationMessage.channel.id;
@@ -904,10 +917,12 @@ async function updateRideAlongNotification(client, request) {
 
   if (!notificationMessage) return;
 
-  await notificationMessage.edit({
-    embeds: [buildRideAlongEmbed(request)],
-    components: buildRideAlongButtons(request),
-  });
+  await notificationMessage.edit(
+    buildRideAlongPayload(request, {
+      forEdit: true,
+      actionRows: buildRideAlongButtons(request),
+    }),
+  );
 }
 
 function getRideAlongRequestIdFromCustomId(prefix, customId) {
@@ -1153,10 +1168,7 @@ async function handleRideAlongInteraction(interaction) {
 
     clearRideAlongEndReminder(request);
 
-    await interaction.reply({
-      ...buildRideAlongEndReviewPayload(request),
-      ephemeral: true,
-    });
+    await interaction.reply(buildRideAlongEndReviewPayload(request));
     return true;
   }
 

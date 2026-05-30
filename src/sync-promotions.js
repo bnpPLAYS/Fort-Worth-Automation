@@ -1,8 +1,9 @@
-const { EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder } = require("discord.js");
-const { EMBED_COLOR, PROMOTION_SYNC_ROLE_ID, ROSTER_SYNC_ROLE_ID } = require("./constants");
+const { PermissionFlagsBits, SlashCommandBuilder } = require("discord.js");
+const { PROMOTION_SYNC_ROLE_ID, ROSTER_SYNC_ROLE_ID } = require("./constants");
 const { isSheetsConfigured, getSheetsConfigHelpMessage } = require("./google-sheets/client");
 const { syncPromotionsFromDiscordForGuild } = require("./google-sheets/roster-sync");
 const { formatEmbedList, getErrorMessage } = require("./embed-utils");
+const { buildV2Payload } = require("./v2-message");
 
 const COMMAND_NAME = "sync-promotions";
 
@@ -68,47 +69,44 @@ async function handleSyncPromotionsCommand(interaction) {
       ...result.notOnSheet,
     ];
 
-    const embed = new EmbedBuilder()
-      .setColor(EMBED_COLOR)
-      .setTitle("Promotion roster sync complete")
-      .setDescription(
-        `Only members with <@&${ROSTER_SYNC_ROLE_ID}> and nickname \`callsign | Name\` are processed. ` +
+    await interaction.editReply(
+      buildV2Payload({
+        title: "Promotion roster sync complete",
+        description:
+          `Only members with <@&${ROSTER_SYNC_ROLE_ID}> and nickname \`callsign | Name\` are processed. ` +
           `Linked **${links.linked.length}** account(s) (${links.unchanged.length} already linked` +
           `${links.purged ? `, ${links.purged} stale link(s) removed` : ""}). ` +
           `Checked **${result.checked}** roster member(s) for rank sync.`,
-      )
-      .addFields(
-        {
-          name: `Newly linked (${links.linked.length})`,
-          value: formatEmbedList(links.linked, { maxItems: 10, maxLength: 900 }),
-          inline: false,
-        },
-        {
-          name: `Roster updated (${result.updated.length})`,
-          value: formatEmbedList(result.updated, { maxItems: 10, maxLength: 900 }),
-          inline: false,
-        },
-        {
-          name: `Already matched (${result.unchanged.length})`,
-          value: formatEmbedList(result.unchanged, { maxItems: 8, maxLength: 900 }),
-          inline: false,
-        },
-        {
-          name: `Skipped (${skipped.length})`,
-          value: formatEmbedList(skipped, { maxItems: 10, maxLength: 900 }),
-          inline: false,
-        },
-      );
-
-    if (result.failed.length > 0) {
-      embed.addFields({
-        name: `Failed (${result.failed.length})`,
-        value: formatEmbedList(result.failed, { maxItems: 8, maxLength: 900 }),
-        inline: false,
-      });
-    }
-
-    await interaction.editReply({ embeds: [embed] });
+        fields: [
+          {
+            name: `Newly linked (${links.linked.length})`,
+            value: formatEmbedList(links.linked, { maxItems: 10, maxLength: 900 }),
+          },
+          {
+            name: `Roster updated (${result.updated.length})`,
+            value: formatEmbedList(result.updated, { maxItems: 10, maxLength: 900 }),
+          },
+          {
+            name: `Already matched (${result.unchanged.length})`,
+            value: formatEmbedList(result.unchanged, { maxItems: 8, maxLength: 900 }),
+          },
+          {
+            name: `Skipped (${skipped.length})`,
+            value: formatEmbedList(skipped, { maxItems: 10, maxLength: 900 }),
+          },
+          ...(result.failed.length > 0
+            ? [
+                {
+                  name: `Failed (${result.failed.length})`,
+                  value: formatEmbedList(result.failed, { maxItems: 8, maxLength: 900 }),
+                },
+              ]
+            : []),
+        ],
+        ephemeral: true,
+        includeFiles: false,
+      }),
+    );
   } catch (error) {
     console.error("Sync promotions failed:", error);
     await interaction.editReply(`Promotion roster sync failed: ${getErrorMessage(error)}`);

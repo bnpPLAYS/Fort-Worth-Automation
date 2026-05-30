@@ -25,6 +25,8 @@ module.exports = {
   INFRACTION_ROLE_ID: "1484976048012660756",
   /** Channel for Internal Affairs release announcements */
   IA_RELEASE_CHANNEL_ID: "1495998701653590056",
+  /** Custom emoji used in department announcements */
+  HPD_EMOJI: "<:HPD:1510017412937027594>",
   GOOGLE_CADET_RANK_NAME: "Cadet",
   GOOGLE_PROBATIONARY_RANK_NAME: "Probationary Officer",
   GOOGLE_SUPERVISOR_RANK_NAME: "Corporal",

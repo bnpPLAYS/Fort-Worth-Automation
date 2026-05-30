@@ -1,5 +1,5 @@
-const { EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder } = require("discord.js");
-const { EMBED_COLOR, ROSTER_ADD_STAFF_ROLE_IDS } = require("./constants");
+const { PermissionFlagsBits, SlashCommandBuilder } = require("discord.js");
+const { ROSTER_ADD_STAFF_ROLE_IDS } = require("./constants");
 const { formatRoleplayInitials } = require("./roleplay-name");
 const { updateMemberCallsign } = require("./discord-callsign");
 const { resolveRankForRosterAdd } = require("./rank-options");
@@ -17,6 +17,7 @@ const {
   assignCadetCallsign,
   findRosterEntriesForName,
 } = require("./google-sheets/roster-assign");
+const { buildV2Payload } = require("./v2-message");
 
 const COMMAND_NAME = "rosteradd";
 const AUTOCOMPLETE_MAX = 25;
@@ -219,16 +220,12 @@ async function handleRosterAddCommand(interaction) {
 
     const nicknameResult = await updateMemberCallsign(member, callsign, roleplayName);
 
-    const embed = new EmbedBuilder()
-      .setColor(EMBED_COLOR)
-      .setTitle("Member added to roster")
-      .setDescription(`Linked <@${member.id}> to the Google roster.`)
-      .addFields(
-        { name: "Roster Name", value: roleplayName, inline: true },
-        { name: "Callsign", value: callsign, inline: true },
-        { name: "Rank", value: sheetRank, inline: true },
-        { name: "Added by", value: `<@${interaction.user.id}>`, inline: false },
-      );
+    const fields = [
+      { name: "Roster Name", value: roleplayName },
+      { name: "Callsign", value: callsign },
+      { name: "Rank", value: sheetRank },
+      { name: "Added by", value: `<@${interaction.user.id}>` },
+    ];
 
     const notes = [];
     if (roleResult.skipped) {
@@ -243,14 +240,22 @@ async function handleRosterAddCommand(interaction) {
     if (!nicknameResult.ok) {
       notes.push(`Nickname not updated: ${nicknameResult.reason}`);
     } else if (nicknameResult.changed) {
-      embed.addFields({ name: "Nickname", value: nicknameResult.nickname, inline: false });
+      fields.push({ name: "Nickname", value: nicknameResult.nickname });
     }
 
     if (notes.length > 0) {
-      embed.addFields({ name: "Notes", value: notes.join("\n"), inline: false });
+      fields.push({ name: "Notes", value: notes.join("\n") });
     }
 
-    await interaction.editReply({ embeds: [embed] });
+    await interaction.editReply(
+      buildV2Payload({
+        title: "Member added to roster",
+        description: `Linked <@${member.id}> to the Google roster.`,
+        fields,
+        ephemeral: true,
+        includeFiles: false,
+      }),
+    );
 
     await sendCallsignDm(member.user, {
       callsign,

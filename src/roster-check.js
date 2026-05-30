@@ -1,6 +1,7 @@
-const { EmbedBuilder, PermissionFlagsBits } = require("discord.js");
-const { EMBED_COLOR, STAFF_PING_ROLE_ID } = require("./constants");
+const { PermissionFlagsBits } = require("discord.js");
+const { STAFF_PING_ROLE_ID } = require("./constants");
 const { runRosterDiagnostics } = require("./google-sheets/diagnostics");
+const { buildV2Payload } = require("./v2-message");
 
 function canRunRosterCheck(interaction) {
   if (interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
@@ -34,18 +35,17 @@ async function handleRosterCheckCommand(interaction) {
   try {
     const result = await runRosterDiagnostics({ rankToCheck });
 
-    const embed = new EmbedBuilder()
-      .setColor(result.ok ? 0x57f287 : 0xed4245)
-      .setTitle(result.ok ? "Roster connection OK" : "Roster connection issues")
-      .setDescription(result.lines.join("\n\n"));
-
-    if (result.serviceAccountEmail) {
-      embed.setFooter({
-        text: "Share the Google Sheet with the service account email above (Editor access).",
-      });
-    }
-
-    await interaction.editReply({ embeds: [embed] });
+    await interaction.editReply(
+      buildV2Payload({
+        title: result.ok ? "Roster connection OK" : "Roster connection issues",
+        description: result.lines.join("\n\n"),
+        footer: result.serviceAccountEmail
+          ? "Share the Google Sheet with the service account email above (Editor access)."
+          : undefined,
+        ephemeral: true,
+        includeFiles: false,
+      }),
+    );
   } catch (error) {
     console.error("Roster check failed:", error);
     await interaction.editReply({

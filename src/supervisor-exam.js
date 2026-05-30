@@ -2,19 +2,18 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
   ModalBuilder,
   PermissionFlagsBits,
   TextInputBuilder,
   TextInputStyle,
 } = require("discord.js");
 const {
-  EMBED_COLOR,
   STAFF_PING_ROLE_ID,
   SUPERVISOR_EXAM_ELIGIBILITY_ROLE_ID,
   SUPERVISOR_APPROVED_ROLE_IDS,
   GOOGLE_SUPERVISOR_RANK_NAME,
 } = require("./constants");
+const { buildV2Payload, buildV2EditPayload } = require("./v2-message");
 const {
   getRoleplayNameFromMember,
   updateMemberCallsign,
@@ -111,18 +110,24 @@ function getExamApplication(appId) {
   return examApplications.get(appId) ?? null;
 }
 
-function buildExamQuestionsEmbed() {
+function buildExamQuestionsPayload() {
   const description = EXAM_FIELDS.map(
     (field) => `**${field.number}.** ${field.question}`,
   ).join("\n\n");
 
-  return new EmbedBuilder()
-    .setColor(EMBED_COLOR)
-    .setTitle("Supervisor Exam")
-    .setDescription(
+  return buildV2Payload({
+    title: "Supervisor Exam",
+    description:
       `${description}\n\n` +
-        `Each answer must be at least **${MIN_WORDS} words**. Click **Begin Exam** below when you are ready.`,
-    );
+      `Each answer must be at least **${MIN_WORDS} words**. Click **Begin Exam** below when you are ready.`,
+    actionRows: [buildBeginExamButton()],
+    ephemeral: true,
+    includeFiles: false,
+  });
+}
+
+function buildExamQuestionsEmbed() {
+  return buildExamQuestionsPayload();
 }
 
 function buildBeginExamButton() {
@@ -156,42 +161,55 @@ function buildSupervisorExamModal() {
   return modal;
 }
 
-function buildSubmissionEmbed(application) {
-  const { userId, userTag, answers, durationMs, status, reviewerTag, denyReason } = application;
+function buildSubmissionPayload(application, { actionRows = [], forEdit = false } = {}) {
+  const { userId, userTag, answers, durationMs, status, reviewerTag, denyReason, submittedAt } =
+    application;
 
-  const embed = new EmbedBuilder()
-    .setColor(EMBED_COLOR)
-    .setTitle(
-      status === "accepted"
-        ? "Supervisor Exam — Approved"
-        : status === "denied"
-          ? "Supervisor Exam — Denied"
-          : "New Supervisor Exam Submission",
-    )
-    .setDescription(`Applicant: <@${userId}> (\`${userTag}\`)\nUser ID: \`${userId}\``)
-    .addFields({
+  const title =
+    status === "accepted"
+      ? "Supervisor Exam — Approved"
+      : status === "denied"
+        ? "Supervisor Exam — Denied"
+        : "New Supervisor Exam Submission";
+
+  const fields = [
+    {
       name: "Completion Time",
       value: formatDuration(durationMs),
-      inline: true,
-    })
-    .setTimestamp(application.submittedAt);
-
-  for (const field of EXAM_FIELDS) {
-    embed.addFields({
+    },
+    ...EXAM_FIELDS.map((field) => ({
       name: `${field.number}. ${field.question}`,
       value: truncateField(answers[field.id]),
-    });
-  }
+    })),
+    ...(status === "denied" && denyReason
+      ? [{ name: "Denial Reason", value: truncateField(denyReason) }]
+      : []),
+  ];
 
-  if (status === "denied" && denyReason) {
-    embed.addFields({ name: "Denial Reason", value: truncateField(denyReason) });
+  const footerParts = [];
+  if (submittedAt) {
+    footerParts.push(`Submitted <t:${Math.floor(submittedAt / 1000)}:f>`);
   }
-
   if (reviewerTag) {
-    embed.setFooter({ text: `Reviewed by ${reviewerTag}` });
+    footerParts.push(`Reviewed by ${reviewerTag}`);
   }
 
-  return embed;
+  const builder = forEdit ? buildV2EditPayload : buildV2Payload;
+
+  return builder({
+    title,
+    description:
+      (status === "pending" ? `<@&${STAFF_PING_ROLE_ID}>\n\n` : "") +
+      `Applicant: <@${userId}> (\`${userTag}\`)\nUser ID: \`${userId}\``,
+    fields,
+    footer: footerParts.length > 0 ? footerParts.join(" · ") : undefined,
+    actionRows,
+    allowedMentions: status === "pending" ? { roles: [STAFF_PING_ROLE_ID] } : undefined,
+  });
+}
+
+function buildSubmissionEmbed(application) {
+  return buildSubmissionPayload(application);
 }
 
 function buildReviewButtons(appId) {
@@ -218,11 +236,7 @@ async function handleSupervisorExamInteraction(interaction) {
       return true;
     }
 
-    await interaction.reply({
-      embeds: [buildExamQuestionsEmbed()],
-      components: [buildBeginExamButton()],
-      ephemeral: true,
-    });
+    await interaction.reply(buildExamQuestionsPayload());
     return true;
   }
 
@@ -317,12 +331,9 @@ async function handleSupervisorExamInteraction(interaction) {
     }
 
     try {
-      const submissionMessage = await submissionsChannel.send({
-        content: `<@&${STAFF_PING_ROLE_ID}>`,
-        embeds: [buildSubmissionEmbed(application)],
-        components: [buildReviewButtons(appId)],
-        allowedMentions: { roles: [STAFF_PING_ROLE_ID] },
-      });
+      const submissionMessage = await submissionsChannel.send(
+        buildSubmissionPayload(application, { actionRows: [buildReviewButtons(appId)] }),
+      );
 
       application.messageId = submissionMessage.id;
       application.channelId = submissionsChannel.id;
@@ -411,10 +422,7 @@ async function handleSupervisorExamInteraction(interaction) {
     const message = await channel?.messages.fetch(application.messageId).catch(() => null);
 
     if (message) {
-      await message.edit({
-        embeds: [buildSubmissionEmbed(application)],
-        components: [],
-      });
+      await message.edit(buildSubmissionPayload(application, { forEdit: true }));
     }
 
     const applicant = await interaction.client.users.fetch(application.userId).catch(() => null);
@@ -504,10 +512,7 @@ async function handleSupervisorExamInteraction(interaction) {
     const message = await channel?.messages.fetch(application.messageId).catch(() => null);
 
     if (message) {
-      await message.edit({
-        embeds: [buildSubmissionEmbed(application)],
-        components: [],
-      });
+      await message.edit(buildSubmissionPayload(application, { forEdit: true }));
     }
 
     const applicant = await interaction.client.users.fetch(application.userId).catch(() => null);

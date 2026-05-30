@@ -1,5 +1,4 @@
-const { EmbedBuilder } = require("discord.js");
-const { EMBED_COLOR } = require("./constants");
+const { buildV2EditPayload } = require("./v2-message");
 const { isSheetsConfigured, getSheetsConfigHelpMessage } = require("./google-sheets/client");
 const {
   PROMOTION_CHANNEL_ID,
@@ -86,47 +85,33 @@ async function handlePromotionMessage(message) {
 
     recordMemberRosterLinkFromResult(memberToUpdate, result);
 
-    const embed = new EmbedBuilder()
-      .setColor(EMBED_COLOR)
-      .setTitle("Roster Updated")
-      .setDescription(
-        `**${parsed.roleplayName}** was moved to a new rank slot in the roster.`,
-      )
-      .addFields(
-        {
-          name: "Previous",
-          value: `${result.previousRank} — ${result.previousCallsign}`,
-          inline: true,
-        },
-        {
-          name: "New",
-          value: `${result.newRank} — ${result.newCallsign}`,
-          inline: true,
-        },
-      );
-
-    if (result.rolls) {
-      embed.addFields({ name: "Rolls / Role", value: result.rolls, inline: true });
-    }
-
+    let nicknameField;
     if (nicknameResult.ok && nicknameResult.changed) {
-      embed.addFields({
-        name: "Discord nickname",
-        value: `Updated to \`${nicknameResult.nickname}\``,
-      });
+      nicknameField = `Updated to \`${nicknameResult.nickname}\``;
     } else if (nicknameResult.ok && !nicknameResult.changed) {
-      embed.addFields({
-        name: "Discord nickname",
-        value: "Already had the correct callsign format.",
-      });
+      nicknameField = "Already had the correct callsign format.";
     } else {
-      embed.addFields({
-        name: "Discord nickname",
-        value: `Could not update: ${nicknameResult.reason}`,
-      });
+      nicknameField = `Could not update: ${nicknameResult.reason}`;
     }
 
-    await processingMessage.edit({ content: null, embeds: [embed] });
+    await processingMessage.edit(
+      buildV2EditPayload({
+        title: "Roster Updated",
+        description: `**${parsed.roleplayName}** was moved to a new rank slot in the roster.`,
+        fields: [
+          {
+            name: "Previous",
+            value: `${result.previousRank} — ${result.previousCallsign}`,
+          },
+          {
+            name: "New",
+            value: `${result.newRank} — ${result.newCallsign}`,
+          },
+          ...(result.rolls ? [{ name: "Rolls / Role", value: result.rolls }] : []),
+          { name: "Discord nickname", value: nicknameField },
+        ],
+      }),
+    );
     scheduleRoleRequestCleanup(message);
   } catch (error) {
     console.error("Promotion update failed:", error);

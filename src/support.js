@@ -1,10 +1,8 @@
 const {
   ActionRowBuilder,
-  AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
-  EmbedBuilder,
   ModalBuilder,
   PermissionFlagsBits,
   SeparatorBuilder,
@@ -13,19 +11,17 @@ const {
   TextInputStyle,
   UserSelectMenuBuilder,
 } = require("discord.js");
-const { buildPanelEmbed, buildPanelButton } = require("./fastpass");
+const { buildPanelButton } = require("./fastpass");
 const { getTicket, saveTicket, deleteTicket, resolveOpenTicket } = require("./tickets-store");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
-const { EMBED_COLOR } = require("./constants");
 const { closeTicket } = require("./transcripts");
 const { getErrorMessage } = require("./embed-utils");
 const { TYPE_SUPERVISOR_EXAM_ID, handleSupervisorExamInteraction } = require("./supervisor-exam");
+const { buildV2Payload } = require("./v2-message");
 const {
-  BANNER_FILENAME,
   createHpdContainer,
   appendHpdFooter,
   buildHpdComponentsPayload,
-  getHpdBannerAttachment,
 } = require("./hpd-components");
 
 const SUPPORT_PANEL_COMMAND = "-supportpanel";
@@ -107,18 +103,50 @@ function isStaff(member) {
   );
 }
 
-function getBannerAttachment() {
-  return getHpdBannerAttachment();
+function truncateField(value) {
+  return value.length > 1024 ? value.slice(0, 1021) + "..." : value;
 }
 
-function getTicketBannerFiles() {
-  const banner = getBannerAttachment();
-  return banner ? [banner] : [];
+function buildInternalAffairsPayload(opener, reportedUser, whatHappened) {
+  return buildV2Payload({
+    withTicketBanner: true,
+    description: `${opener}\n\nThank you for contacting our Internal Affairs Unit, ${opener}. Our support team will be with you shortly. In the mean time, please review the report details below:`,
+    title: "Internal Affairs",
+    fields: [
+      { name: "Reported Member", value: `${reportedUser}` },
+      { name: "Submitted By", value: `${opener}` },
+      { name: "What Happened", value: truncateField(whatHappened) },
+    ],
+    allowedMentions: { users: [opener.id] },
+  });
 }
 
-function withTicketBanner(embed) {
-  if (!BANNER_FILENAME) return embed;
-  return embed.setImage(`attachment://${BANNER_FILENAME}`);
+function buildGeneralSupportPayload(opener) {
+  return buildV2Payload({
+    withTicketBanner: true,
+    description:
+      `@here ${opener}\n\nWelcome to your General Support Ticket, ${opener}. Our support team will be with you shortly. ` +
+      "In the mean time, please provide as much information about your issue, question, or concern. " +
+      "If you have opened the wrong type of ticket by accident, please let us know and we can switch the ticket panel for you. " +
+      "Ensure you do not ping any ticket staff as they are volunteers and may have other responsibilities. " +
+      "We ask that you remain patient and considerate.",
+    title: "General Support",
+    allowedMentions: { parse: ["everyone", "users"] },
+  });
+}
+
+function buildStaffPanelPayload() {
+  return buildV2Payload({
+    title: "Staff Ticket Panel",
+    description:
+      "Use the controls below to manage this ticket.\n\n" +
+      "• **Close Ticket** — closes the ticket and DMs the opener with your reason\n" +
+      "• **Close Request** — asks the opener if the ticket is resolved with a self-close button\n" +
+      "• **Ticket Advance** — escalates the ticket to High Command",
+    actionRows: [buildStaffPanelButtons()],
+    ephemeral: true,
+    includeFiles: false,
+  });
 }
 
 function buildAssistanceHubContent() {
@@ -186,50 +214,6 @@ function buildReportUserSelect() {
   );
 }
 
-function buildInternalAffairsEmbed(opener, reportedUser, whatHappened) {
-  return withTicketBanner(
-    new EmbedBuilder()
-      .setColor(EMBED_COLOR)
-      .setTitle("Internal Affairs")
-      .setDescription(
-        `Thank you for contacting our Internal Affairs Unit, ${opener}. Our support team will be with you shortly. ` +
-          "In the mean time, please review the report details below:",
-      )
-      .addFields(
-        { name: "Reported Member", value: `${reportedUser}`, inline: true },
-        { name: "Submitted By", value: `${opener}`, inline: true },
-        { name: "What Happened", value: truncateField(whatHappened) },
-      ),
-  );
-}
-
-function buildGeneralSupportEmbed(opener) {
-  return withTicketBanner(
-    new EmbedBuilder()
-      .setColor(EMBED_COLOR)
-      .setTitle("General Support")
-      .setDescription(
-        `Welcome to your General Support Ticket, ${opener}. Our support team will be with you shortly. ` +
-          "In the mean time, please provide as much information about your issue, question, or concern. " +
-          "If you have opened the wrong type of ticket by accident, please let us know and we can switch the ticket panel for you. " +
-          "Ensure you do not ping any ticket staff as they are volunteers and may have other responsibilities. " +
-          "We ask that you remain patient and considerate.",
-      ),
-  );
-}
-
-function buildStaffPanelEmbed() {
-  return new EmbedBuilder()
-    .setColor(EMBED_COLOR)
-    .setTitle("Staff Ticket Panel")
-    .setDescription(
-      "Use the controls below to manage this ticket.\n\n" +
-        "• **Close Ticket** — closes the ticket and DMs the opener with your reason\n" +
-        "• **Close Request** — asks the opener if the ticket is resolved with a self-close button\n" +
-        "• **Ticket Advance** — escalates the ticket to High Command",
-    );
-}
-
 function buildStaffPanelButtons() {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -256,9 +240,6 @@ function buildUserCloseButton() {
   );
 }
 
-function truncateField(value) {
-  return value.length > 1024 ? value.slice(0, 1021) + "..." : value;
-}
 
 async function createReportTicket(interaction, reportedUser, whatHappened) {
   const guild = interaction.guild;
@@ -295,11 +276,7 @@ async function createReportTicket(interaction, reportedUser, whatHappened) {
     closed: false,
   });
 
-  await channel.send({
-    content: `${opener}`,
-    embeds: [buildInternalAffairsEmbed(opener, reportedUser, whatHappened)],
-    files: getTicketBannerFiles(),
-  });
+  await channel.send(buildInternalAffairsPayload(opener, reportedUser, whatHappened));
   await channel.send(
     "Please **link any clips or evidence** you have regarding this incident. Staff will be notified once you send a message in this channel.",
   );
@@ -339,12 +316,7 @@ async function createOtherTicket(interaction) {
     closed: false,
   });
 
-  await channel.send({
-    content: `@here ${opener}`,
-    embeds: [buildGeneralSupportEmbed(opener)],
-    files: getTicketBannerFiles(),
-    allowedMentions: { parse: ["everyone", "users"] },
-  });
+  await channel.send(buildGeneralSupportPayload(opener));
 
   await interaction.editReply(`Your support ticket has been opened: ${channel}`);
 }
@@ -399,10 +371,7 @@ async function handleStaffPanelCommand(interaction) {
     return true;
   }
 
-  await interaction.reply({
-    embeds: [buildStaffPanelEmbed()],
-    components: [buildStaffPanelButtons()],
-  });
+  await interaction.reply(buildStaffPanelPayload());
 
   return true;
 }
@@ -421,11 +390,16 @@ async function handleSupportInteraction(interaction) {
   }
 
   if (interaction.isButton() && interaction.customId === TYPE_FASTPASS_ID) {
-    await interaction.update({
-      content: "Use the Fast Pass panel below to begin your application:",
-      embeds: [buildPanelEmbed()],
-      components: [buildPanelButton()],
-    });
+    await interaction.update(
+      buildV2Payload({
+        description: "Use the Fast Pass panel below to begin your application:",
+        title: "Fast Pass Application",
+        footer: "Fort Worth Automation",
+        actionRows: [buildPanelButton()],
+        ephemeral: true,
+        includeFiles: false,
+      }),
+    );
     return true;
   }
 

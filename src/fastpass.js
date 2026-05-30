@@ -2,7 +2,6 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
   ModalBuilder,
   StringSelectMenuBuilder,
   TextInputBuilder,
@@ -11,7 +10,8 @@ const {
 } = require("discord.js");
 const { getCooldownEnd, isOnCooldown, setCooldown } = require("./cooldowns");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
-const { EMBED_COLOR, STAFF_PING_ROLE_ID } = require("./constants");
+const { STAFF_PING_ROLE_ID } = require("./constants");
+const { buildV2Payload, buildV2EditPayload } = require("./v2-message");
 const { updateMemberCallsign, extractCallsignFromDisplayName } = require("./discord-callsign");
 const { assignMemberRosterRoles, sendCallsignDm } = require("./member-roster");
 const { formatRoleplayInitials } = require("./roleplay-name");
@@ -155,28 +155,19 @@ function buildModal(title, customId, fields) {
   return modal;
 }
 
-function buildPanelEmbed() {
-  return new EmbedBuilder()
-    .setColor(EMBED_COLOR)
-    .setTitle("Fast Pass Application")
-    .setDescription(
+function buildPanelPayload() {
+  return buildV2Payload({
+    title: "Fast Pass Application",
+    description:
       "Click **Fast Pass** below to begin your application.\n\n" +
-        "You will enter your **full roleplay name** first (e.g. John Smith → roster name **J. Smith**).\n\n" +
-        "The second part requires detailed answers of at least 20 words each.",
-    )
-    .setFooter({ text: "Fort Worth Automation" });
+      "You will enter your **full roleplay name** first (e.g. John Smith → roster name **J. Smith**).\n\n" +
+      "The second part requires detailed answers of at least 20 words each.",
+    footer: "Fort Worth Automation",
+    actionRows: [buildPanelButton()],
+  });
 }
 
-function buildPanelButton() {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(BUTTON_CUSTOM_ID)
-      .setLabel("Fast Pass")
-      .setStyle(ButtonStyle.Secondary),
-  );
-}
-
-function buildSubmissionEmbed(application) {
+function buildSubmissionPayload(application, { actionRows = [], forEdit = false } = {}) {
   const {
     userId,
     userTag,
@@ -189,63 +180,90 @@ function buildSubmissionEmbed(application) {
     denyReason,
     roleplayName,
     roleplayNameRaw,
+    submittedAt,
   } = application;
 
-  const embed = new EmbedBuilder()
-    .setColor(EMBED_COLOR)
-    .setTitle(
-      status === "accepted"
-        ? "Fast Pass Application — Accepted"
-        : status === "denied"
-          ? "Fast Pass Application — Denied"
-          : "New Fast Pass Application",
-    )
-    .setDescription(`Applicant: <@${userId}> (\`${userTag}\`)\nUser ID: \`${userId}\``)
-    .addFields({
+  const title =
+    status === "accepted"
+      ? "Fast Pass Application — Accepted"
+      : status === "denied"
+        ? "Fast Pass Application — Denied"
+        : "New Fast Pass Application";
+
+  const fields = [
+    {
       name: "Completion Time",
       value: formatDuration(durationMs),
-      inline: true,
-    })
-    .setTimestamp(application.submittedAt);
+    },
+  ];
 
   if (roleplayName) {
-    embed.addFields({
+    fields.push({
       name: "Roster Name",
-      value: roleplayNameRaw
-        ? `${roleplayName} *(from ${roleplayNameRaw})*`
-        : roleplayName,
-      inline: true,
+      value: roleplayNameRaw ? `${roleplayName} *(from ${roleplayNameRaw})*` : roleplayName,
     });
   }
 
   for (const field of STAGE_ONE_FIELDS) {
     if (field.id === "roleplay_name") continue;
-    embed.addFields({
+    fields.push({
       name: field.question,
       value: truncateField(stage1[field.id]),
     });
   }
 
   for (const field of STAGE_TWO_FIELDS) {
-    embed.addFields({
+    fields.push({
       name: field.question,
       value: truncateField(stage2[field.id]),
     });
   }
 
   if (status === "accepted" && rankLabel) {
-    embed.addFields({ name: "Assigned Rank", value: rankLabel });
+    fields.push({ name: "Assigned Rank", value: rankLabel });
   }
 
   if (status === "denied" && denyReason) {
-    embed.addFields({ name: "Denial Reason", value: truncateField(denyReason) });
+    fields.push({ name: "Denial Reason", value: truncateField(denyReason) });
   }
 
+  const footerParts = [];
+  if (submittedAt) {
+    footerParts.push(`Submitted <t:${Math.floor(submittedAt / 1000)}:f>`);
+  }
   if (reviewerTag) {
-    embed.setFooter({ text: `Reviewed by ${reviewerTag}` });
+    footerParts.push(`Reviewed by ${reviewerTag}`);
   }
 
-  return embed;
+  const builder = forEdit ? buildV2EditPayload : buildV2Payload;
+
+  return builder({
+    title,
+    description:
+      (status === "pending" ? `<@&${STAFF_PING_ROLE_ID}>\n\n` : "") +
+      `Applicant: <@${userId}> (\`${userTag}\`)\nUser ID: \`${userId}\``,
+    fields,
+    footer: footerParts.length > 0 ? footerParts.join(" · ") : undefined,
+    actionRows,
+    allowedMentions: status === "pending" ? { roles: [STAFF_PING_ROLE_ID] } : undefined,
+  });
+}
+
+function buildPanelButton() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(BUTTON_CUSTOM_ID)
+      .setLabel("Fast Pass")
+      .setStyle(ButtonStyle.Secondary),
+  );
+}
+
+function buildSubmissionEmbed(application) {
+  return buildSubmissionPayload(application);
+}
+
+function buildPanelEmbed() {
+  return buildPanelPayload();
 }
 
 function buildReviewButtons(appId) {
@@ -307,10 +325,7 @@ async function handlePanelCommand(message) {
     return true;
   }
 
-  await panelChannel.send({
-    embeds: [buildPanelEmbed()],
-    components: [buildPanelButton()],
-  });
+  await panelChannel.send(buildPanelPayload());
 
   return true;
 }
@@ -490,12 +505,9 @@ async function handleInteraction(interaction) {
 
     let submissionMessage;
     try {
-      submissionMessage = await submissionsChannel.send({
-        content: `<@&${STAFF_PING_ROLE_ID}>`,
-        embeds: [buildSubmissionEmbed(application)],
-        components: [buildReviewButtons(appId)],
-        allowedMentions: { roles: [STAFF_PING_ROLE_ID] },
-      });
+      submissionMessage = await submissionsChannel.send(
+        buildSubmissionPayload(application, { actionRows: [buildReviewButtons(appId)] }),
+      );
     } catch (sendError) {
       applications.delete(appId);
       console.error("Failed to send Fast Pass submission:", sendError);
@@ -628,10 +640,7 @@ async function handleInteraction(interaction) {
     const message = await channel?.messages.fetch(application.messageId).catch(() => null);
 
     if (message) {
-      await message.edit({
-        embeds: [buildSubmissionEmbed(application)],
-        components: [],
-      });
+      await message.edit(buildSubmissionPayload(application, { forEdit: true }));
     }
 
     if (!rosterResult) {
@@ -724,10 +733,7 @@ async function handleInteraction(interaction) {
     const message = await channel?.messages.fetch(application.messageId).catch(() => null);
 
     if (message) {
-      await message.edit({
-        embeds: [buildSubmissionEmbed(application)],
-        components: [],
-      });
+      await message.edit(buildSubmissionPayload(application, { forEdit: true }));
     }
 
     const applicant = await interaction.client.users.fetch(application.userId).catch(() => null);
@@ -752,6 +758,7 @@ async function handleInteraction(interaction) {
 module.exports = {
   MIN_WORDS,
   buildPanelEmbed,
+  buildPanelPayload,
   buildPanelButton,
   handlePanelCommand,
   handleInteraction,

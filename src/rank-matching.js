@@ -1,5 +1,13 @@
+const RANK_SPELLING_CORRECTIONS = new Map([
+  ["corparal", "corporal"],
+]);
+
 function normalizeRank(value) {
-  return String(value).trim().toLowerCase().replace(/\s+/g, " ");
+  let normalized = String(value).trim().toLowerCase().replace(/\s+/g, " ");
+  if (RANK_SPELLING_CORRECTIONS.has(normalized)) {
+    normalized = RANK_SPELLING_CORRECTIONS.get(normalized);
+  }
+  return normalized;
 }
 
 function rankTokens(rankName) {

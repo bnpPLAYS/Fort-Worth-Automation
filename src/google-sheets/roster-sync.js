@@ -17,11 +17,14 @@ const {
   getLinkedRoleplayName,
   normalizeName,
   callsignsMatch,
+  getMemberRosterIdentity,
+  entryMatchesMemberIdentity,
 } = require("./roster-match");
 const { getRosterLink } = require("../roster-links-store");
 const {
   recordMemberRosterLink,
   purgeRosterLinksWithoutSyncRole,
+  removeMemberRosterLink,
 } = require("../roster-member-link");
 const { getErrorMessage } = require("../embed-utils");
 const { sendCallsignDm, hasRosterSyncRole } = require("../member-roster");
@@ -49,7 +52,17 @@ function needsProbationaryRosterMove(entries, probationaryRank) {
 }
 
 async function resolveRoleplayNameForMember(member, fallbackName = "") {
+  const fromNickname = getRoleplayNameFromMember(member);
   const linkedName = getLinkedRoleplayName(member);
+
+  if (linkedName && fromNickname && normalizeName(linkedName) === normalizeName(fromNickname)) {
+    return linkedName;
+  }
+
+  if (fromNickname) {
+    return fromNickname;
+  }
+
   if (linkedName) {
     return linkedName;
   }
@@ -60,9 +73,8 @@ async function resolveRoleplayNameForMember(member, fallbackName = "") {
     return matchedEntry.name;
   }
 
-  const fromNickname = getRoleplayNameFromMember(member);
   const callsign = getRosterCallsignForMember(member);
-  const candidates = [fromNickname, fallbackName].filter(Boolean);
+  const candidates = [fallbackName].filter(Boolean);
 
   for (const name of candidates) {
     const entries = await findRosterEntriesForName(name, { callsign });
@@ -71,7 +83,7 @@ async function resolveRoleplayNameForMember(member, fallbackName = "") {
     }
   }
 
-  return fromNickname || fallbackName;
+  return fallbackName;
 }
 
 async function safeFetchGuildMembers(guild) {
@@ -102,6 +114,7 @@ async function linkRosterAccountsFromCallsigns(guild) {
   const notOnSheet = [];
   const ambiguous = [];
   const wrongNicknameFormat = [];
+  const nameMismatch = [];
 
   for (const member of members.values()) {
     const displayName = String(member.displayName ?? "");
@@ -110,32 +123,43 @@ async function linkRosterAccountsFromCallsigns(guild) {
       continue;
     }
 
-    const callsign = extractDepartmentCallsignFromDisplayName(displayName);
-    if (!callsign) {
+    const identity = getMemberRosterIdentity(member);
+    if (!identity.callsign) {
       noCallsign.push(member.displayName);
       continue;
     }
 
-    const byCallsign = namedEntries.filter((entry) => callsignsMatch(entry.callsign, callsign));
+    if (!identity.roleplayName || identity.roleplayName.length < 2) {
+      wrongNicknameFormat.push(member.displayName);
+      continue;
+    }
+
+    const byCallsign = namedEntries.filter((entry) =>
+      callsignsMatch(entry.callsign, identity.callsign),
+    );
 
     if (byCallsign.length === 0) {
       notOnSheet.push(member.displayName);
       continue;
     }
 
-    let entry = byCallsign.length === 1 ? byCallsign[0] : null;
-    if (!entry) {
-      const roleplayName = normalizeName(getRoleplayNameFromMember(member));
-      const narrowed = byCallsign.filter(
-        (sheetEntry) => normalizeName(sheetEntry.name) === roleplayName,
+    const matches = byCallsign.filter((entry) => entryMatchesMemberIdentity(entry, identity));
+
+    if (matches.length === 0) {
+      removeMemberRosterLink(member);
+      const sheetNames = [...new Set(byCallsign.map((entry) => entry.name))].join(", ");
+      nameMismatch.push(
+        `${member.displayName} (callsign **${formatCallsignForDisplay(identity.callsign)}** is **${sheetNames}** on the sheet, not **${getRoleplayNameFromMember(member)}**)`,
       );
-      if (narrowed.length === 1) {
-        entry = narrowed[0];
-      } else {
-        ambiguous.push(member.displayName);
-        continue;
-      }
+      continue;
     }
+
+    if (matches.length > 1) {
+      ambiguous.push(member.displayName);
+      continue;
+    }
+
+    const entry = matches[0];
 
     const previous = getRosterLink(member.id);
     recordMemberRosterLink(member, entry);
@@ -161,6 +185,7 @@ async function linkRosterAccountsFromCallsigns(guild) {
     notOnSheet,
     ambiguous,
     wrongNicknameFormat,
+    nameMismatch,
     purged,
     checked: members.size,
   };

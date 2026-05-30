@@ -56,12 +56,21 @@ async function handleSyncPromotionsCommand(interaction) {
 
   try {
     const result = await syncPromotionsFromDiscordForGuild(interaction.guild);
-    const links = result.links ?? { linked: [], unchanged: [], noCallsign: [], notOnSheet: [], ambiguous: [] };
+    const links = result.links ?? {
+      linked: [],
+      unchanged: [],
+      noCallsign: [],
+      notOnSheet: [],
+      ambiguous: [],
+      wrongNicknameFormat: [],
+      nameMismatch: [],
+    };
 
     const skipped = [
       ...(links.wrongNicknameFormat ?? []).map(
         (name) => `${name} (use \`callsign | Name\` nickname format)`,
       ),
+      ...(links.nameMismatch ?? []),
       ...links.noCallsign.map((name) => `${name} (no callsign in nickname)`),
       ...links.notOnSheet.map((name) => `${name} (callsign not on sheet)`),
       ...links.ambiguous.map((name) => `${name} (ambiguous link)`),

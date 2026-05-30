@@ -84,35 +84,57 @@ function findEntryByStoredLink(namedEntries, link) {
   return null;
 }
 
+function getMemberRosterIdentity(member) {
+  const displayName = String(member?.displayName ?? "").trim();
+  const callsign = extractDepartmentCallsignFromDisplayName(displayName);
+  const roleplayName = normalizeName(getRoleplayNameFromMember(member));
+  return { displayName, callsign, roleplayName };
+}
+
+function entryMatchesMemberIdentity(entry, { callsign, roleplayName }) {
+  if (!callsign || !callsignsMatch(entry.callsign, callsign)) {
+    return false;
+  }
+
+  if (roleplayName && roleplayName.length >= 2) {
+    return normalizeName(entry.name) === roleplayName;
+  }
+
+  return true;
+}
+
 function findRosterEntryForMember(entries, member) {
   const namedEntries = entries.filter((entry) => entry.name.length > 0);
   if (namedEntries.length === 0 || !member || !hasRosterSyncRole(member)) return null;
 
-  const storedLink = member.id ? getRosterLink(member.id) : null;
-  const linkedEntry = findEntryByStoredLink(namedEntries, storedLink);
-  if (linkedEntry) {
-    return linkedEntry;
+  const identity = getMemberRosterIdentity(member);
+  const { callsign, roleplayName } = identity;
+
+  if (callsign && roleplayName) {
+    const matches = namedEntries.filter((entry) => entryMatchesMemberIdentity(entry, identity));
+    if (matches.length === 1) {
+      return matches[0];
+    }
+
+    const callsignRows = namedEntries.filter((entry) => callsignsMatch(entry.callsign, callsign));
+    if (callsignRows.length > 0) {
+      return null;
+    }
   }
 
-  const memberCallsign = extractDepartmentCallsignFromDisplayName(member.displayName);
-  const roleplayName = normalizeName(getRoleplayNameFromMember(member));
-
-  if (memberCallsign) {
-    const byCallsign = namedEntries.filter((entry) => callsignsMatch(entry.callsign, memberCallsign));
+  if (callsign && !roleplayName) {
+    const byCallsign = namedEntries.filter((entry) => callsignsMatch(entry.callsign, callsign));
     if (byCallsign.length === 1) {
       return byCallsign[0];
     }
-    if (byCallsign.length > 1) {
-      const narrowed = byCallsign.filter((entry) => normalizeName(entry.name) === roleplayName);
-      if (narrowed.length === 1) {
-        return narrowed[0];
-      }
-    }
+    return null;
   }
 
-  const byName = namedEntries.filter((entry) => normalizeName(entry.name) === roleplayName);
-  if (byName.length === 1) {
-    return byName[0];
+  if (roleplayName && !callsign) {
+    const byName = namedEntries.filter((entry) => normalizeName(entry.name) === roleplayName);
+    if (byName.length === 1) {
+      return byName[0];
+    }
   }
 
   return null;
@@ -145,6 +167,8 @@ module.exports = {
   callsignsMatch,
   filterEntriesByName,
   resolveEntriesByNameAndCallsign,
+  getMemberRosterIdentity,
+  entryMatchesMemberIdentity,
   findRosterEntryForMember,
   getCallsignFromMember,
   getRosterCallsignForMember,

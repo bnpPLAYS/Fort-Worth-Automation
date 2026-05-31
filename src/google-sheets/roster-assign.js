@@ -5,6 +5,7 @@ const {
   isSheetsConfigured,
   getCadetRankName,
 } = require("./client");
+const { expandRankSlots } = require("./roster-expand");
 const { ranksMatch } = require("../rank-matching");
 const {
   filterEntriesByName,
@@ -59,13 +60,22 @@ async function assignNameToSlot(sheetName, slot, roleplayName) {
   ]);
 }
 
-async function assignMemberToOpenRank(roleplayName, newRank, { currentCallsign } = {}) {
-  const { entries, sheetName } = await getRosterRows();
-  const openSlot = findOpenSlotInRank(entries, newRank);
+async function assignMemberToOpenRank(roleplayName, newRank, { currentCallsign, expandCount } = {}) {
+  let { entries, sheetName } = await getRosterRows();
+  let openSlot = findOpenSlotInRank(entries, newRank);
+
+  if (!openSlot) {
+    const expansion = await expandRankSlots(newRank, expandCount);
+    console.log(
+      `Expanded roster rank ${expansion.rank} by ${expansion.count} rows (${expansion.firstCallsign}-${expansion.lastCallsign})`,
+    );
+    ({ entries, sheetName } = await getRosterRows());
+    openSlot = findOpenSlotInRank(entries, newRank);
+  }
 
   if (!openSlot) {
     throw new Error(
-      `No open callsign slot found for rank **${newRank}**. Add a vacant row with that rank, a callsign, and an empty RP NAME cell.`,
+      `No open callsign slot found for rank **${newRank}** after expanding the roster.`,
     );
   }
 

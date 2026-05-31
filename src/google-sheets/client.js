@@ -176,7 +176,31 @@ async function getRosterRows() {
     });
   }
 
-  return { sheetName, entries, nameColumnLetter, headerRowNumber: headerRowIndex + 1 };
+  return {
+    sheetName,
+    entries,
+    nameColumnLetter,
+    headerRowNumber: headerRowIndex + 1,
+    rankIndex,
+    nameIndex,
+    callsignIndex,
+    rollsIndex,
+  };
+}
+
+async function getSheetId(sheetName = getRosterSheetName()) {
+  const sheets = await getSheetsClient();
+  const response = await sheets.spreadsheets.get({
+    spreadsheetId: getSpreadsheetId(),
+    fields: "sheets.properties",
+  });
+  const tab = (response.data.sheets ?? []).find((sheet) => sheet.properties.title === sheetName);
+
+  if (!tab) {
+    throw new Error(`Sheet tab "${sheetName}" not found.`);
+  }
+
+  return tab.properties.sheetId;
 }
 
 async function batchUpdateCells(updates) {
@@ -202,5 +226,7 @@ module.exports = {
   getCredentialsPath,
   getSheetsClient,
   getRosterRows,
+  getSheetId,
   batchUpdateCells,
+  columnIndexToLetter,
 };

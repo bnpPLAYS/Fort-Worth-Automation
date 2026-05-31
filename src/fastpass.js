@@ -92,7 +92,7 @@ const STAGE_TWO_FIELDS = [
   },
 ];
 
-const { RANK_OPTIONS } = require("./rank-options");
+const { RANK_OPTIONS, resolveRankForRosterAdd } = require("./rank-options");
 
 const RANKS = RANK_OPTIONS.filter((rank) => !rank.useCadetCallsign).map((rank) => ({
   id: rank.discordRoleIds[0],
@@ -580,6 +580,8 @@ async function handleInteraction(interaction) {
     const guild = await interaction.client.guilds.fetch(application.guildId).catch(() => null);
     const member = await guild?.members.fetch(application.userId).catch(() => null);
     const rankLabel = rank?.label ?? "Unknown Rank";
+    const rankOption = RANK_OPTIONS.find((option) => option.discordRoleIds.includes(roleId));
+    const { sheetRank } = resolveRankForRosterAdd(guild, rankOption?.id ?? rankLabel);
 
     if (member && guild) {
       await member.roles.add(roleId, "Fast Pass accepted").catch((error) => {
@@ -594,7 +596,7 @@ async function handleInteraction(interaction) {
       const roleplayName = application.roleplayName;
 
       try {
-        rosterResult = await assignMemberToOpenRank(roleplayName, rankLabel, {
+        rosterResult = await assignMemberToOpenRank(roleplayName, sheetRank, {
           currentCallsign: getRosterCallsignForMember(member),
         });
         const nicknameResult = await updateMemberCallsign(

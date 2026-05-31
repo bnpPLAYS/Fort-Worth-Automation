@@ -18,6 +18,11 @@ const {
   restoreRideAlongReminders,
 } = require("./cadet");
 const { handlePromotionMessage } = require("./promotion-handler");
+const {
+  buildDatabaseCommand,
+  handleDatabaseCommand,
+  handleDatabaseAutocomplete,
+} = require("./database-request");
 const { handleRosterCheckCommand } = require("./roster-check");
 const {
   buildRosterAddCommand,
@@ -84,6 +89,7 @@ const commands = [
   buildRosterAddCommand(),
   buildRefreshCallsignCommand(),
   buildSyncPromotionsCommand(),
+  buildDatabaseCommand(),
   buildRideAlongCommand(),
   buildInfractionCommand(),
   buildInfoCommand(),
@@ -131,7 +137,10 @@ function isBenignInteractionError(error) {
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.isAutocomplete()) {
-      let handledAutocomplete = await handleRosterAddAutocomplete(interaction);
+      let handledAutocomplete = await handleDatabaseAutocomplete(interaction);
+      if (handledAutocomplete) return;
+
+      handledAutocomplete = await handleRosterAddAutocomplete(interaction);
       if (handledAutocomplete) return;
 
       handledAutocomplete = await handleInternalAffairsAutocomplete(interaction);
@@ -166,6 +175,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
 
     handled = await handleSyncPromotionsCommand(interaction);
+    if (handled) return;
+
+    handled = await handleDatabaseCommand(interaction);
     if (handled) return;
 
     handled = await handleInfractionCommand(interaction);

@@ -36,7 +36,7 @@ function canUseRosterAdd(member) {
 function buildRosterAddCommand() {
   return new SlashCommandBuilder()
     .setName(COMMAND_NAME)
-    .setDescription("Add a member to the Google roster and link their Discord account")
+    .setDescription("Add a member to the department roster (database) — staff only")
     .addUserOption((option) =>
       option.setName("member").setDescription("Discord member to add to the roster").setRequired(true),
     )

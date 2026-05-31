@@ -1,4 +1,4 @@
-const { extractCallsignFromDisplayName } = require("./discord-callsign");
+const { extractDepartmentCallsignFromDisplayName } = require("./discord-callsign");
 const { canBypassRankEligibility } = require("./rank-eligibility");
 
 function normalizeName(value) {
@@ -54,7 +54,7 @@ function validatePromotionRequester(authorMember, parsed, { staffBypass = false 
     };
   }
 
-  const nicknameCallsign = extractCallsignFromDisplayName(authorMember.displayName);
+  const nicknameCallsign = extractDepartmentCallsignFromDisplayName(authorMember.displayName);
   if (
     nicknameCallsign &&
     normalizeCallsign(parsed.currentCallsign) !== nicknameCallsign

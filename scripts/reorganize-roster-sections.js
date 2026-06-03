@@ -7,6 +7,10 @@ async function main() {
   const dryRun = process.argv.includes("--dry-run");
   const force = process.argv.includes("--force");
 
+  if (force) {
+    console.log("Force mode: running reorganization v2 even if a prior marker exists.\n");
+  }
+
   if (!isSheetsConfigured()) {
     console.error(getSheetsConfigHelpMessage());
     process.exit(1);

@@ -140,12 +140,13 @@ Manual `/sync-promotions` still works the same way.
 
 ### One-time roster layout (Commander / Captain)
 
-On first startup after an update, the bot runs a **one-time** sheet cleanup (tracked in `data/.roster-reorganized.json` on the server):
+On first startup after an update, the bot runs a **one-time** sheet cleanup v2 (tracked in `data/.roster-reorganized.json` on the server):
 
-- Renames **Commander** rows to **Office of the Chief**
-- Moves **Captain** rows into the **Patrol Supervisors** section
+- Restores **Commander** rank text if a prior run mislabeled rows as Office of the Chief
+- **Moves** Commander rows into the **Office of the Chief** section (rank stays Commander)
+- **Moves** Captain rows to the **top** of the supervisory section (Patrol Supervisors); other rows shift down
 
-Staff can also run: `node scripts/reorganize-roster-sections.js` (`--dry-run` to preview, `--force` to run again).
+Staff can also run: `node scripts/reorganize-roster-sections.js` (`--dry-run` to preview, `--force` to run again after deleting the marker file).
 
 ### `/sync-promotions` (role `1484949249245315302`)
 

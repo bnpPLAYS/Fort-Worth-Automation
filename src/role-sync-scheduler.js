@@ -8,7 +8,11 @@ const {
 const { getRosterRows } = require("./google-sheets/client");
 const { hasRosterSyncRole } = require("./member-roster");
 const { ranksMatch } = require("./rank-matching");
-const { reorganizeRosterStructure, hasReorganizeMarker } = require("./google-sheets/roster-reorganize");
+const {
+  reorganizeRosterStructure,
+  hasReorganizeMarker,
+  REORGANIZE_VERSION,
+} = require("./google-sheets/roster-reorganize");
 const { MEMBER_ROSTER_ROLE_IDS, ROSTER_SYNC_ROLE_ID } = require("./constants");
 
 const ROLE_SYNC_INTERVAL_MS = Number.parseInt(process.env.ROLE_SYNC_INTERVAL_MS || "300000", 10);
@@ -91,12 +95,16 @@ async function runRoleSyncPass(client, { reason = "scheduled" } = {}) {
 }
 
 async function maybeRunStartupReorganize() {
-  if (!isSheetsConfigured() || hasReorganizeMarker()) return;
+  if (!isSheetsConfigured()) return;
+
+  if (hasReorganizeMarker()) {
+    return;
+  }
 
   try {
     const result = await reorganizeRosterStructure({ force: false });
     if (!result.skipped) {
-      console.log("[roster-reorganize] Completed:", result);
+      console.log(`[roster-reorganize] v${REORGANIZE_VERSION} completed:`, result);
     }
   } catch (error) {
     console.error("[roster-reorganize] Failed:", error);

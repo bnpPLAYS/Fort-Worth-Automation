@@ -85,7 +85,7 @@ Cadets request ride-alongs with **`/ridealong`** in the ride-along request chann
 | Event | Bot action |
 |-------|------------|
 | **Become Cadet** | Assigns next open `C-1` … `C-100` cadet callsign |
-| **Fast Pass accepted** | Assigns open slot for the selected rank (e.g. Probationary Officer) + department callsign |
+| **Quiz accepted** | Assigns open slot for the selected rank (e.g. Probationary Officer) + department callsign |
 | **Supervisor exam approved** | Moves member from **Lance Corporal** to open **Corporal** slot (`GOOGLE_SUPERVISOR_RANK_NAME`) |
 | **Promotion channel message** | Manual rank move (existing flow) |
 | **`/rosteradd`** (staff) | First-time roster setup: RP name + Discord member + rank → open callsign, nickname, Discord roles |
@@ -114,7 +114,7 @@ The bot stores a persistent link for each Discord account in `data/roster-links.
 
 - **Discord user ID** → roleplay name, callsign, sheet row number, rank
 
-Links are created or updated whenever someone is added or synced (`/rosteradd`, cadet enroll, Fast Pass, ride-along pass, promotions, `/refresh-callsign`, `/sync-promotions`, demotions, etc.).
+Links are created or updated whenever someone is added or synced (`/rosteradd`, cadet enroll, Quiz, ride-along pass, promotions, `/refresh-callsign`, `/sync-promotions`, demotions, etc.).
 
 **Mass callsign updates** (`/refresh-callsign`) use this link first, then nickname callsign, so two members with the same RP name (e.g. two **J. Smith** rows) are not mixed up.
 
@@ -164,7 +164,7 @@ Requires open roster slots for any new ranks. Rank names on Discord roles must l
 
 ### Member roster roles
 
-When someone is added via **Become Cadet**, **Fast Pass accept**, **ride-along pass**, or **`/rosteradd`**, the bot assigns roles `1484951746852818944` and `1498375617455067387` and DMs their callsign when assigned.
+When someone is added via **Become Cadet**, **Quiz accept**, **ride-along pass**, or **`/rosteradd`**, the bot assigns roles `1484951746852818944` and `1498375617455067387` and DMs their callsign when assigned.
 
 Rank names on the sheet must match Discord role names loosely (e.g. `Probationary Officer`, `LIEUTENANT`).
 - Promotion clears the old **RP NAME** and fills the first open slot in the new rank

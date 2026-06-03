@@ -8,7 +8,7 @@ const CADET_ROLE_IDS = mergeRoleIds(
   MEMBER_ROSTER_ROLE_IDS,
 );
 
-/** Discord role + sheet rank label pairs used by Fast Pass and /rosteradd */
+/** Discord role + sheet rank label pairs used by Quiz and /rosteradd */
 const RANK_OPTIONS = [
   {
     id: "cadet",

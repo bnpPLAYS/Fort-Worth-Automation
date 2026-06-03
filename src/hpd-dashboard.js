@@ -16,7 +16,7 @@ const {
 
 const DASHBOARD_COMMAND = "-hpddashboard";
 const CADET_ENROLL_BUTTON_ID = "cadet_enroll";
-const FASTPASS_BUTTON_ID = "fastpass_apply";
+const { BUTTON_CUSTOM_ID } = require("./quiz");
 
 function buildDashboardContent() {
   return (
@@ -24,7 +24,7 @@ function buildDashboardContent() {
     "> **Service with Respect, Dedicated to Protect.**\n\n" +
     "> Welcome to the **Houston Police Department!** In this dashboard you will be able to find all important information regarding the Houston Police Department.\n\n" +
     "`Frequently Asked Questions`\n\n" +
-    "1. *Is there an application?* Use the **Become a Cadet** or **Fast Pass** buttons below to apply.\n" +
+    "1. *Is there an application?* Use the **Become a Cadet** or **Quiz** buttons below to apply.\n" +
     "2. *Where do I report an Officer?* You can report an officer by opening an **Internal Affairs** ticket through **Contact Support → Report**.\n" +
     "3. *What are your callsigns for unranked?* If you are unranked, your callsign is between the numbers of **400–500**."
   );
@@ -37,8 +37,8 @@ function buildDashboardButtonRow() {
       .setLabel("Become a Cadet")
       .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
-      .setCustomId(FASTPASS_BUTTON_ID)
-      .setLabel("Fast Pass")
+      .setCustomId(BUTTON_CUSTOM_ID)
+      .setLabel("Quiz")
       .setStyle(ButtonStyle.Secondary),
   );
 }

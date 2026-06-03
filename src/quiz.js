@@ -17,19 +17,27 @@ const { formatRoleplayInitials } = require("./roleplay-name");
 const { isSheetsConfigured } = require("./google-sheets/client");
 const { completeMemberRosterSetup } = require("./roster-onboarding");
 
-const PANEL_COMMAND = "-panelfastpass";
-const BUTTON_CUSTOM_ID = "fastpass_apply";
-const MODAL_STAGE_ONE_ID = "fastpass_modal_stage1";
-const MODAL_DENY_PREFIX = "fastpass_deny_modal:";
-const CONTINUE_PREFIX = "fastpass_continue:";
-const MODAL_STAGE_TWO_PREFIX = "fastpass_modal_stage2:";
-const ACCEPT_PREFIX = "fastpass_accept:";
-const DENY_PREFIX = "fastpass_deny:";
-const RANK_SELECT_PREFIX = "fastpass_rank:";
+const PANEL_COMMAND = "-panelquiz";
+const LEGACY_PANEL_COMMAND = "-panelfastpass";
+const BUTTON_CUSTOM_ID = "quiz_apply";
+const LEGACY_BUTTON_CUSTOM_ID = "fastpass_apply";
+const MODAL_STAGE_ONE_ID = "quiz_modal_stage1";
+const MODAL_DENY_PREFIX = "quiz_deny_modal:";
+const CONTINUE_PREFIX = "quiz_continue:";
+const MODAL_STAGE_TWO_PREFIX = "quiz_modal_stage2:";
+const ACCEPT_PREFIX = "quiz_accept:";
+const DENY_PREFIX = "quiz_deny:";
+const RANK_SELECT_PREFIX = "quiz_rank:";
 
 const MIN_WORDS = 20;
 const GUIDE_CHANNEL_ID = "1484990957299564666";
-const FASTPASS_PANEL_CHANNEL_ID = process.env.FASTPASS_PANEL_CHANNEL_ID || "1484948609546846290";
+function getQuizPanelChannelId() {
+  return (
+    process.env.QUIZ_PANEL_CHANNEL_ID ||
+    process.env.FASTPASS_PANEL_CHANNEL_ID ||
+    "1484948609546846290"
+  );
+}
 
 const STAGE_ONE_FIELDS = [
   {
@@ -98,7 +106,11 @@ const pendingSessions = new Map();
 const applications = new Map();
 
 function getSubmissionsChannelId() {
-  return process.env.FASTPASS_SUBMISSIONS_CHANNEL_ID || "1498803252626718833";
+  return (
+    process.env.QUIZ_SUBMISSIONS_CHANNEL_ID ||
+    process.env.FASTPASS_SUBMISSIONS_CHANNEL_ID ||
+    "1498803252626718833"
+  );
 }
 
 function countWords(text) {
@@ -152,9 +164,9 @@ function buildModal(title, customId, fields) {
 
 function buildPanelPayload() {
   return buildV2Payload({
-    title: "Fast Pass Application",
+    title: "Quiz Application",
     description:
-      "Click **Fast Pass** below to begin your application.\n\n" +
+      "Click **Quiz** below to begin your application.\n\n" +
       "You will enter your **full roleplay name** first (e.g. John Smith → roster name **J. Smith**).\n\n" +
       "The second part requires detailed answers of at least 20 words each.",
     footer: "Fort Worth Automation",
@@ -180,10 +192,10 @@ function buildSubmissionPayload(application, { actionRows = [], forEdit = false 
 
   const title =
     status === "accepted"
-      ? "Fast Pass Application — Accepted"
+      ? "Quiz Application — Accepted"
       : status === "denied"
-        ? "Fast Pass Application — Denied"
-        : "New Fast Pass Application";
+        ? "Quiz Application — Denied"
+        : "New Quiz Application";
 
   const fields = [
     {
@@ -248,7 +260,7 @@ function buildPanelButton() {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(BUTTON_CUSTOM_ID)
-      .setLabel("Fast Pass")
+      .setLabel("Quiz")
       .setStyle(ButtonStyle.Secondary),
   );
 }
@@ -293,7 +305,8 @@ function getApplication(appId) {
 }
 
 async function handlePanelCommand(message) {
-  if (message.content.trim().toLowerCase() !== PANEL_COMMAND) return false;
+  const command = message.content.trim().toLowerCase();
+  if (command !== PANEL_COMMAND && command !== LEGACY_PANEL_COMMAND) return false;
   if (message.author.bot) return false;
 
   if (hasProcessed(`panel:${message.id}`)) {
@@ -303,7 +316,7 @@ async function handlePanelCommand(message) {
   markProcessed(`panel:${message.id}`);
 
   if (!message.member?.permissions?.has(PermissionFlagsBits.ManageGuild)) {
-    await message.reply("You need **Manage Server** permission to post the Fast Pass panel.");
+    await message.reply("You need **Manage Server** permission to post the Quiz panel.");
     return true;
   }
 
@@ -311,11 +324,11 @@ async function handlePanelCommand(message) {
     await message.delete().catch(() => {});
   }
 
-  const panelChannel = await message.client.channels.fetch(FASTPASS_PANEL_CHANNEL_ID).catch(() => null);
+  const panelChannel = await message.client.channels.fetch(getQuizPanelChannelId()).catch(() => null);
 
   if (!panelChannel?.isTextBased()) {
     await message.channel.send(
-      "The Fast Pass panel channel could not be found. Check the bot configuration.",
+      "The Quiz panel channel could not be found. Check the bot configuration.",
     );
     return true;
   }
@@ -332,7 +345,10 @@ async function handleInteraction(interaction) {
   }
   markProcessed(dedupeKey);
 
-  if (interaction.isButton() && interaction.customId === BUTTON_CUSTOM_ID) {
+  if (
+    interaction.isButton() &&
+    (interaction.customId === BUTTON_CUSTOM_ID || interaction.customId === LEGACY_BUTTON_CUSTOM_ID)
+  ) {
     if (isOnCooldown(interaction.user.id)) {
       const cooldownEnd = getCooldownEnd(interaction.user.id);
       await interaction.reply({
@@ -348,7 +364,7 @@ async function handleInteraction(interaction) {
       stage1: null,
     });
 
-    await interaction.showModal(buildModal("Fast Pass — Part 1", MODAL_STAGE_ONE_ID, STAGE_ONE_FIELDS));
+    await interaction.showModal(buildModal("Quiz — Part 1", MODAL_STAGE_ONE_ID, STAGE_ONE_FIELDS));
     return true;
   }
 
@@ -356,7 +372,7 @@ async function handleInteraction(interaction) {
     const session = pendingSessions.get(interaction.user.id);
     if (!session) {
       await interaction.reply({
-        content: "Your session expired. Please click **Fast Pass** again to restart.",
+        content: "Your session expired. Please click **Quiz** again to restart.",
         ephemeral: true,
       });
       return true;
@@ -405,7 +421,7 @@ async function handleInteraction(interaction) {
     const session = pendingSessions.get(userId);
     if (!session?.stage1) {
       await interaction.reply({
-        content: "Your session expired. Please click **Fast Pass** again to restart.",
+        content: "Your session expired. Please click **Quiz** again to restart.",
         ephemeral: true,
       });
       return true;
@@ -413,7 +429,7 @@ async function handleInteraction(interaction) {
 
     await interaction.showModal(
       buildModal(
-        "Fast Pass — Part 2",
+        "Quiz — Part 2",
         `${MODAL_STAGE_TWO_PREFIX}${userId}`,
         STAGE_TWO_FIELDS,
       ),
@@ -431,7 +447,7 @@ async function handleInteraction(interaction) {
     const session = pendingSessions.get(userId);
     if (!session?.stage1) {
       await interaction.reply({
-        content: "Your session expired. Please click **Fast Pass** again to restart.",
+        content: "Your session expired. Please click **Quiz** again to restart.",
         ephemeral: true,
       });
       return true;
@@ -505,7 +521,7 @@ async function handleInteraction(interaction) {
       );
     } catch (sendError) {
       applications.delete(appId);
-      console.error("Failed to send Fast Pass submission:", sendError);
+      console.error("Failed to send Quiz submission:", sendError);
       await interaction.editReply(
         "Your application could not be sent due to a Discord error. Contact an admin.",
       );
@@ -517,7 +533,7 @@ async function handleInteraction(interaction) {
 
     try {
       await interaction.editReply(
-        `Your Fast Pass application has been submitted! It took you **${formatDuration(durationMs)}** to complete.`,
+        `Your Quiz application has been submitted! It took you **${formatDuration(durationMs)}** to complete.`,
       );
     } catch (editError) {
       console.warn("Application submitted, but success reply failed:", editError.message);
@@ -579,7 +595,7 @@ async function handleInteraction(interaction) {
     const { sheetRank } = resolveRankForRosterAdd(guild, rankOption?.id ?? rankLabel);
 
     if (member && guild) {
-      await member.roles.add(roleId, "Fast Pass accepted").catch((error) => {
+      await member.roles.add(roleId, "Quiz accepted").catch((error) => {
         console.error("Failed to assign role:", error);
       });
     }
@@ -593,8 +609,8 @@ async function handleInteraction(interaction) {
         const setup = await completeMemberRosterSetup(member, {
           roleplayName,
           sheetRank,
-          reason: "Fast Pass accepted",
-          dmTitle: "Congratulations! Your Fast Pass application has been **accepted**.",
+          reason: "Quiz accepted",
+          dmTitle: "Congratulations! Your Quiz application has been **accepted**.",
           dmExtraLines: [`Please read over <#${GUIDE_CHANNEL_ID}> before getting started.`],
         });
 
@@ -608,7 +624,7 @@ async function handleInteraction(interaction) {
               : ` (nickname not updated: ${setup.syncResult.nicknameResult?.reason ?? "unknown"})`) +
           (setup.dmSent ? "" : " (DM failed — check privacy settings)");
       } catch (error) {
-        console.error("Fast Pass roster assignment failed:", error);
+        console.error("Quiz roster assignment failed:", error);
         rosterSummary = `\nRoster assignment failed: ${error.message}`;
       }
     }
@@ -629,7 +645,7 @@ async function handleInteraction(interaction) {
       const applicant = await interaction.client.users.fetch(application.userId).catch(() => null);
       if (applicant) {
         let dmContent =
-          `Congratulations! Your Fast Pass application has been **accepted**.\n\n` +
+          `Congratulations! Your Quiz application has been **accepted**.\n\n` +
           `You have been assigned the rank: **${application.rankLabel}**\n\n` +
           `Please read over <#${GUIDE_CHANNEL_ID}> before getting started.`;
 
@@ -723,7 +739,7 @@ async function handleInteraction(interaction) {
       await applicant
         .send({
           content:
-            `Your Fast Pass application has been **denied**.\n\n` +
+            `Your Quiz application has been **denied**.\n\n` +
             `**Reason:** ${denyReason}\n\n` +
             `You may submit a new application after <t:${Math.floor(cooldownEnd / 1000)}:F> (<t:${Math.floor(cooldownEnd / 1000)}:R>).`,
         })
@@ -739,6 +755,8 @@ async function handleInteraction(interaction) {
 
 module.exports = {
   MIN_WORDS,
+  BUTTON_CUSTOM_ID,
+  LEGACY_BUTTON_CUSTOM_ID,
   buildPanelEmbed,
   buildPanelPayload,
   buildPanelButton,

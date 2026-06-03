@@ -781,7 +781,7 @@ async function handleCadetInteraction(interaction) {
 
       reply +=
         `\n\nYour assigned **cadet callsign** is **${cadetAssignment.callsign}**.` +
-        "\n**Do not use this callsign in-game.** You are not officially part of the department until you pass Fast Pass and receive a department callsign.";
+        "\n**Do not use this callsign in-game.** You are not officially part of the department until you pass the Quiz and receive a department callsign.";
 
       if (nicknameResult.ok && nicknameResult.changed) {
         reply += `\nYour Discord nickname was updated to \`${nicknameResult.nickname}\`.`;

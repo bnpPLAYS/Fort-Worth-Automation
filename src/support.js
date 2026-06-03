@@ -11,7 +11,7 @@ const {
   TextInputStyle,
   UserSelectMenuBuilder,
 } = require("discord.js");
-const { buildPanelButton } = require("./fastpass");
+const { buildPanelButton, BUTTON_CUSTOM_ID } = require("./quiz");
 const { getTicket, saveTicket, deleteTicket, resolveOpenTicket } = require("./tickets-store");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { closeTicket } = require("./transcripts");
@@ -27,7 +27,8 @@ const {
 const SUPPORT_PANEL_COMMAND = "-supportpanel";
 
 const CONTACT_BUTTON_ID = "support_contact";
-const TYPE_FASTPASS_ID = "support_type_fastpass";
+const TYPE_QUIZ_ID = "support_type_quiz";
+const LEGACY_TYPE_QUIZ_ID = "support_type_fastpass";
 const TYPE_REPORT_ID = "support_type_report";
 const TYPE_OTHER_ID = "support_type_other";
 const REPORT_USER_SELECT_ID = "support_report_user";
@@ -155,7 +156,7 @@ function buildAssistanceHubContent() {
     "Click **Contact Support** below to open a ticket or application.\n\n" +
     "**Available options:**\n" +
     "• **Other** — General support tickets\n" +
-    "• **Fast Pass** — Department Fast Pass application\n" +
+    "• **Quiz** — Department quiz application\n" +
     "• **Report** — Report a member or officer\n" +
     "• **Supervisor Exam** — Supervisor promotion exam"
   );
@@ -186,8 +187,8 @@ function buildContactSupportButton() {
 function buildSupportTypeButtons() {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(TYPE_FASTPASS_ID)
-      .setLabel("FastPass")
+      .setCustomId(TYPE_QUIZ_ID)
+      .setLabel("Quiz")
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId(TYPE_REPORT_ID)
@@ -389,11 +390,14 @@ async function handleSupportInteraction(interaction) {
     return true;
   }
 
-  if (interaction.isButton() && interaction.customId === TYPE_FASTPASS_ID) {
+  if (
+    interaction.isButton() &&
+    (interaction.customId === TYPE_QUIZ_ID || interaction.customId === LEGACY_TYPE_QUIZ_ID)
+  ) {
     await interaction.update(
       buildV2Payload({
-        description: "Use the Fast Pass panel below to begin your application:",
-        title: "Fast Pass Application",
+        description: "Use the Quiz panel below to begin your application:",
+        title: "Quiz Application",
         footer: "Fort Worth Automation",
         actionRows: [buildPanelButton()],
         ephemeral: true,

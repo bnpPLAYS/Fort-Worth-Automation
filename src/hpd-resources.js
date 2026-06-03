@@ -45,7 +45,17 @@ const RESOURCE_LINKS = [
   {
     fieldName: "Melonly",
     buttonLabel: "Melonly Link",
-    url: "https://melon.ly/join/fwpd",
+    url: "https://melon.ly/join/houstonpd",
+  },
+  {
+    fieldName: "Accessory & Livery Regulations",
+    buttonLabel: "Accessory & Livery",
+    url: "https://docs.google.com/spreadsheets/d/1aA2gTq7IqzXGSrxJmHidDr0eUeLvrdqnVrxXv2uBnOw/edit?usp=sharing",
+  },
+  {
+    fieldName: "Vehicle Regulation",
+    buttonLabel: "Vehicle Regulation",
+    url: "https://docs.google.com/spreadsheets/d/1ivUThGBrDmzyp7cNbbEAyAoDP9zZx3KHozjUxvReJ6w/edit?usp=sharing",
   },
 ];
 

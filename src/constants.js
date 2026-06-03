@@ -18,7 +18,7 @@ module.exports = {
   PROMOTION_SYNC_ROLE_ID: "1484949249245315302",
   /** Members with this role are synced from the sheet by /refresh-callsign */
   ROSTER_SYNC_ROLE_ID: "1484951746852818944",
-  /** Always assigned when added to the roster (cadet, Fast Pass, ride-along pass, etc.) */
+  /** Always assigned when added to the roster (cadet, Quiz, ride-along pass, etc.) */
   MEMBER_ROSTER_ROLE_IDS: ["1484951746852818944", "1498375617455067387"],
   PROBATIONARY_OFFICER_ROLE_ID: "1484975766868594699",
   /** Internal Affairs — may run /infraction */

@@ -8,7 +8,7 @@ const {
   Routes,
   SlashCommandBuilder,
 } = require("discord.js");
-const { handlePanelCommand, handleInteraction, MIN_WORDS } = require("./fastpass");
+const { handlePanelCommand, handleInteraction, MIN_WORDS } = require("./quiz");
 const {
   buildRideAlongCommand,
   handleCadetPanelCommand,
@@ -107,7 +107,7 @@ async function registerCommands() {
 
 client.once(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
-  console.log(`Fast Pass Part 2 minimum: ${MIN_WORDS} words per answer`);
+  console.log(`Quiz Part 2 minimum: ${MIN_WORDS} words per answer`);
   restoreRideAlongReminders(readyClient);
   registerRoleSyncHandlers(readyClient);
   startRoleSyncScheduler(readyClient);

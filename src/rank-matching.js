@@ -9,6 +9,9 @@ const RANK_CANONICAL_ALIASES = new Map([
   ["officer 1", "officer one"],
   ["officer 2", "officer two"],
   ["officer 3", "officer three"],
+  ["commander", "office of the chief"],
+  ["chief commander", "office of the chief"],
+  ["patrol commander", "office of the chief"],
 ]);
 
 function normalizeRank(value) {

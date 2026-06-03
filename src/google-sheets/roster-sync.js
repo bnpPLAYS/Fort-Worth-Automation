@@ -371,6 +371,84 @@ function inferMemberRankFromDiscord(member, orderedSheetRanks) {
   return null;
 }
 
+async function syncMemberRankFromDiscord(member, { dmOnChange = true } = {}) {
+  if (!hasRosterSyncRole(member)) {
+    return { status: "skipped", reason: "Member does not have the department roster role." };
+  }
+
+  const { entries } = await getRosterRows();
+  const orderedRanks = getOrderedRanksFromEntries(entries);
+  const discordRank = inferMemberRankFromDiscord(member, orderedRanks);
+
+  if (!discordRank) {
+    return { status: "no_rank_role" };
+  }
+
+  const namedEntries = await getNamedRosterEntries();
+  let sheetEntry = findRosterEntryForMember(namedEntries, member);
+
+  if (!sheetEntry) {
+    const roleplayName = await resolveRoleplayNameForMember(member);
+    if (!roleplayName) {
+      return { status: "not_on_sheet", reason: "not on roster — use /rosteradd" };
+    }
+
+    const callsign = getRosterCallsignForMember(member);
+    const sheetEntries = await findRosterEntriesForName(roleplayName, { callsign, member });
+    if (sheetEntries.length === 1) {
+      sheetEntry = sheetEntries[0];
+      recordMemberRosterLink(member, sheetEntry);
+    }
+  }
+
+  if (!sheetEntry) {
+    return { status: "not_on_sheet", reason: "not on roster — use /rosteradd" };
+  }
+
+  const roleplayName = sheetEntry.name;
+
+  if (ranksMatch(sheetEntry.rank, discordRank)) {
+    const syncResult = await syncMemberCallsignFromEntry(member, sheetEntry, { dmOnChange });
+    if (syncResult.skipped) {
+      return { status: "failed", error: syncResult.nicknameResult.reason };
+    }
+
+    if (syncResult.callsignChanged) {
+      return {
+        status: "updated",
+        summary: `callsign synced — **${discordRank}** / ${sheetEntry.callsign}`,
+      };
+    }
+
+    return { status: "unchanged" };
+  }
+
+  const rosterResult = await assignMemberToOpenRank(roleplayName, discordRank, {
+    currentCallsign: getRosterCallsignForMember(member),
+  });
+  const syncResult = await syncMemberCallsignFromEntry(
+    member,
+    {
+      name: roleplayName,
+      callsign: rosterResult.newCallsign,
+      rank: rosterResult.newRank,
+      rowNumber: rosterResult.rowNumber,
+    },
+    { dmOnChange },
+  );
+
+  if (syncResult.skipped) {
+    return { status: "failed", error: syncResult.nicknameResult.reason };
+  }
+
+  return {
+    status: "updated",
+    summary:
+      `**${rosterResult.previousRank ?? "none"}** / ${rosterResult.previousCallsign ?? "—"} → **${rosterResult.newRank}** / **${rosterResult.newCallsign}**` +
+      (syncResult.dmSent ? "" : " (DM failed)"),
+  };
+}
+
 async function syncPromotionsFromDiscordForGuild(guild) {
   const links = await linkRosterAccountsFromCallsigns(guild);
 
@@ -399,72 +477,19 @@ async function syncPromotionsFromDiscordForGuild(guild) {
         continue;
       }
 
-      const namedEntries = await getNamedRosterEntries();
-      let sheetEntry = findRosterEntryForMember(namedEntries, member);
+      const outcome = await syncMemberRankFromDiscord(member, { dmOnChange: true });
 
-      if (!sheetEntry) {
-        const roleplayName = await resolveRoleplayNameForMember(member);
-        if (!roleplayName) {
-          notOnSheet.push(`${member.displayName} (not on roster — use /rosteradd)`);
-          continue;
-        }
-
-        const callsign = getRosterCallsignForMember(member);
-        const sheetEntries = await findRosterEntriesForName(roleplayName, { callsign, member });
-        if (sheetEntries.length === 1) {
-          sheetEntry = sheetEntries[0];
-          recordMemberRosterLink(member, sheetEntry);
-        }
+      if (outcome.status === "updated") {
+        updated.push(`${member.displayName}: ${outcome.summary}`);
+      } else if (outcome.status === "unchanged") {
+        unchanged.push(`${member.displayName} — **${discordRank}**`);
+      } else if (outcome.status === "not_on_sheet") {
+        notOnSheet.push(`${member.displayName} (${outcome.reason})`);
+      } else if (outcome.status === "failed") {
+        failed.push(`${member.displayName}: ${outcome.error}`);
+      } else if (outcome.status === "skipped") {
+        failed.push(`${member.displayName}: ${outcome.reason}`);
       }
-
-      if (!sheetEntry) {
-        notOnSheet.push(`${member.displayName} (not on roster — use /rosteradd)`);
-        continue;
-      }
-
-      const roleplayName = sheetEntry.name;
-
-      if (ranksMatch(sheetEntry.rank, discordRank)) {
-        const syncResult = await syncMemberCallsignFromEntry(member, sheetEntry, {
-          dmOnChange: true,
-        });
-        if (syncResult.skipped) {
-          failed.push(`${member.displayName}: ${syncResult.nicknameResult.reason}`);
-          continue;
-        }
-
-        const label = `${member.displayName} — **${discordRank}** / ${sheetEntry.callsign}`;
-        if (syncResult.callsignChanged) {
-          updated.push(`${label} (callsign synced)`);
-        } else {
-          unchanged.push(label);
-        }
-        continue;
-      }
-
-      const rosterResult = await assignMemberToOpenRank(roleplayName, discordRank, {
-        currentCallsign: getRosterCallsignForMember(member),
-      });
-      const syncResult = await syncMemberCallsignFromEntry(
-        member,
-        {
-          name: roleplayName,
-          callsign: rosterResult.newCallsign,
-          rank: rosterResult.newRank,
-          rowNumber: rosterResult.rowNumber,
-        },
-        { dmOnChange: true },
-      );
-
-      if (syncResult.skipped) {
-        failed.push(`${member.displayName}: ${syncResult.nicknameResult.reason}`);
-        continue;
-      }
-
-      updated.push(
-        `${member.displayName}: **${rosterResult.previousRank ?? "none"}** / ${rosterResult.previousCallsign ?? "—"} → **${rosterResult.newRank}** / **${rosterResult.newCallsign}**` +
-          (syncResult.dmSent ? "" : " (DM failed)"),
-      );
     } catch (error) {
       console.error(`Promotion sync failed for ${member.id}:`, error);
       failed.push(`${member.displayName}: ${error.message}`);
@@ -487,6 +512,7 @@ module.exports = {
   needsProbationaryRosterMove,
   promoteToProbationaryOnRoster,
   syncMemberCallsignFromEntry,
+  syncMemberRankFromDiscord,
   safeFetchGuildMembers,
   linkRosterAccountsFromCallsigns,
   fixProbationaryRosterForGuild,

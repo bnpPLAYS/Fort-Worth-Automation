@@ -129,6 +129,24 @@ Runs two steps:
 
 Use after bulk callsign changes or when ride-along passes could not move people because no PO slots were open.
 
+### Automatic Discord rank sync (every 5 minutes)
+
+The bot also watches **Discord rank role** changes (for example **Cadet** → **Probationary Officer**):
+
+- On role change, it updates the Google roster row, nickname, stored link, and **DMs** the new callsign when it changes.
+- Every **5 minutes** it runs a safety pass for members with the roster sync role (`1484951746852818944`).
+
+Manual `/sync-promotions` still works the same way.
+
+### One-time roster layout (Commander / Captain)
+
+On first startup after an update, the bot runs a **one-time** sheet cleanup (tracked in `data/.roster-reorganized.json` on the server):
+
+- Renames **Commander** rows to **Office of the Chief**
+- Moves **Captain** rows into the **Patrol Supervisors** section
+
+Staff can also run: `node scripts/reorganize-roster-sections.js` (`--dry-run` to preview, `--force` to run again).
+
 ### `/sync-promotions` (role `1484949249245315302`)
 
 Run **after Discord promotions** (rank roles updated). For every member with role `1484951746852818944`:

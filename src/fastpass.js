@@ -12,15 +12,10 @@ const { getCooldownEnd, isOnCooldown, setCooldown } = require("./cooldowns");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { STAFF_PING_ROLE_ID } = require("./constants");
 const { buildV2Payload, buildV2EditPayload } = require("./v2-message");
-const { updateMemberCallsign, extractCallsignFromDisplayName } = require("./discord-callsign");
-const { assignMemberRosterRoles, sendCallsignDm } = require("./member-roster");
+const { extractCallsignFromDisplayName } = require("./discord-callsign");
 const { formatRoleplayInitials } = require("./roleplay-name");
-const {
-  isSheetsConfigured,
-  assignMemberToOpenRank,
-} = require("./google-sheets/roster-assign");
-const { getRosterCallsignForMember } = require("./google-sheets/roster-match");
-const { recordMemberRosterLinkFromResult } = require("./roster-member-link");
+const { isSheetsConfigured } = require("./google-sheets/client");
+const { completeMemberRosterSetup } = require("./roster-onboarding");
 
 const PANEL_COMMAND = "-panelfastpass";
 const BUTTON_CUSTOM_ID = "fastpass_apply";
@@ -587,7 +582,6 @@ async function handleInteraction(interaction) {
       await member.roles.add(roleId, "Fast Pass accepted").catch((error) => {
         console.error("Failed to assign role:", error);
       });
-      await assignMemberRosterRoles(member, "Fast Pass accepted");
     }
 
     let rosterSummary = "";
@@ -596,37 +590,23 @@ async function handleInteraction(interaction) {
       const roleplayName = application.roleplayName;
 
       try {
-        rosterResult = await assignMemberToOpenRank(roleplayName, sheetRank, {
-          currentCallsign: getRosterCallsignForMember(member),
-        });
-        const nicknameResult = await updateMemberCallsign(
-          member,
-          rosterResult.newCallsign,
+        const setup = await completeMemberRosterSetup(member, {
           roleplayName,
-        );
+          sheetRank,
+          reason: "Fast Pass accepted",
+          dmTitle: "Congratulations! Your Fast Pass application has been **accepted**.",
+          dmExtraLines: [`Please read over <#${GUIDE_CHANNEL_ID}> before getting started.`],
+        });
 
+        rosterResult = setup.rosterResult;
         rosterSummary =
-          `\nRoster: **${rosterResult.newRank}** — callsign **${rosterResult.newCallsign}**` +
-          (nicknameResult.ok && nicknameResult.changed
-            ? ` (nickname updated)`
-            : nicknameResult.ok
+          `\nRoster: **${setup.rank}** — callsign **${setup.callsign}**` +
+          (setup.syncResult.nicknameResult?.ok && setup.syncResult.nicknameResult.changed
+            ? " (nickname updated)"
+            : setup.syncResult.nicknameResult?.ok
               ? ""
-              : ` (nickname not updated: ${nicknameResult.reason})`);
-
-        await sendCallsignDm(member.user, {
-          callsign: rosterResult.newCallsign,
-          roleplayName,
-          rank: rosterResult.newRank,
-          title: "Congratulations! Your Fast Pass application has been **accepted**.",
-          extraLines: [
-            `Please read over <#${GUIDE_CHANNEL_ID}> before getting started.`,
-            ...(nicknameResult.ok && nicknameResult.changed
-              ? [`Your Discord nickname is now \`${nicknameResult.nickname}\`.`]
-              : []),
-          ],
-        });
-
-        recordMemberRosterLinkFromResult(member, rosterResult);
+              : ` (nickname not updated: ${setup.syncResult.nicknameResult?.reason ?? "unknown"})`) +
+          (setup.dmSent ? "" : " (DM failed — check privacy settings)");
       } catch (error) {
         console.error("Fast Pass roster assignment failed:", error);
         rosterSummary = `\nRoster assignment failed: ${error.message}`;

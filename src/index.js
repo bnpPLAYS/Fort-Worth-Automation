@@ -47,6 +47,10 @@ const {
   handleSupportInteraction,
   handleSupportMessage,
 } = require("./support");
+const {
+  startRoleSyncScheduler,
+  registerRoleSyncHandlers,
+} = require("./role-sync-scheduler");
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.CLIENT_ID;
@@ -105,6 +109,8 @@ client.once(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
   console.log(`Fast Pass Part 2 minimum: ${MIN_WORDS} words per answer`);
   restoreRideAlongReminders(readyClient);
+  registerRoleSyncHandlers(readyClient);
+  startRoleSyncScheduler(readyClient);
 });
 
 client.on(Events.MessageCreate, async (message) => {

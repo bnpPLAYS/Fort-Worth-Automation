@@ -394,16 +394,12 @@ async function handleSupportInteraction(interaction) {
     interaction.isButton() &&
     (interaction.customId === TYPE_QUIZ_ID || interaction.customId === LEGACY_TYPE_QUIZ_ID)
   ) {
-    await interaction.update(
-      buildV2Payload({
-        description: "Use the Quiz panel below to begin your application:",
-        title: "Quiz Application",
-        footer: "Fort Worth Automation",
-        actionRows: [buildPanelButton()],
-        ephemeral: true,
-        includeFiles: false,
-      }),
-    );
+    await interaction.update({
+      content:
+        "## Quiz Application\n\nUse the **Quiz** button below to begin your application.",
+      embeds: [],
+      components: [buildPanelButton()],
+    });
     return true;
   }
 

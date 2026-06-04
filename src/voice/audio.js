@@ -1,4 +1,5 @@
 const ffmpegPath = require("ffmpeg-static");
+const { PermissionFlagsBits } = require("discord.js");
 const {
   createAudioPlayer,
   createAudioResource,
@@ -7,8 +8,11 @@ const {
   AudioPlayerStatus,
   VoiceConnectionStatus,
   StreamType,
+  getVoiceConnection,
 } = require("@discordjs/voice");
 const { spawn } = require("child_process");
+const { ensureVoiceReady } = require("./init");
+const { getMemberVoiceChannel } = require("./member-voice");
 
 if (ffmpegPath) {
   process.env.FFMPEG_PATH = ffmpegPath;
@@ -43,14 +47,22 @@ function createMp3Resource(filePath) {
 }
 
 async function joinMemberVoiceChannel(member) {
-  const voiceChannel = member?.voice?.channel;
+  await ensureVoiceReady();
+
+  const voiceChannel = await getMemberVoiceChannel(member);
   if (!voiceChannel) {
-    throw new Error("You must be in a voice channel to start an interview.");
+    throw new Error("Join a voice channel first, then run the command again.");
   }
 
-  const permissions = voiceChannel.permissionsFor(member.guild.members.me);
-  if (!permissions?.has("Connect") || !permissions?.has("Speak")) {
+  const me = member.guild.members.me ?? (await member.guild.members.fetchMe().catch(() => null));
+  const permissions = voiceChannel.permissionsFor(me);
+  if (!permissions?.has(PermissionFlagsBits.Connect) || !permissions?.has(PermissionFlagsBits.Speak)) {
     throw new Error("I need **Connect** and **Speak** permission in your voice channel.");
+  }
+
+  const existing = getVoiceConnection(member.guild.id);
+  if (existing) {
+    existing.destroy();
   }
 
   const connection = joinVoiceChannel({
@@ -61,7 +73,12 @@ async function joinMemberVoiceChannel(member) {
     selfMute: false,
   });
 
-  await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
+  try {
+    await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+  } catch (error) {
+    connection.destroy();
+    throw new Error("Could not connect to voice. Check bot permissions and try again.");
+  }
 
   const player = createAudioPlayer();
   connection.subscribe(player);
@@ -69,8 +86,11 @@ async function joinMemberVoiceChannel(member) {
   return { connection, player, voiceChannel };
 }
 
-async function playFile(player, filePath) {
+async function playFile(player, filePath, { volume = 1 } = {}) {
   const resource = createMp3Resource(filePath);
+  if (resource.volume && volume !== 1) {
+    resource.volume.setVolume(Math.min(Math.max(volume, 0.1), 2));
+  }
   player.play(resource);
   await entersState(player, AudioPlayerStatus.Playing, 30_000).catch(() => null);
   await entersState(player, AudioPlayerStatus.Idle, 300_000);

@@ -4,10 +4,12 @@ const {
   ButtonStyle,
   Events,
   PermissionFlagsBits,
+  SlashCommandBuilder,
 } = require("discord.js");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { STAFF_PING_ROLE_ID } = require("./constants");
 const { synthesizeSpeech, deleteTempFile } = require("./voice/tts");
+const { ensureMessageMember, getMemberVoiceChannel } = require("./voice/member-voice");
 const {
   joinMemberVoiceChannel,
   playFile,
@@ -160,11 +162,11 @@ async function endInterview(client, guildId, { reason, silent = false } = {}) {
   }
 }
 
-async function resolveInterviewee(message) {
+async function resolveInterviewee(message, hostMember) {
   const mentioned = message.mentions.users.first();
 
   if (mentioned) {
-    if (!canInterviewOthers(message.member)) {
+    if (!canInterviewOthers(hostMember)) {
       return {
         error: "You need staff permissions to start an interview for someone else.",
       };
@@ -175,26 +177,79 @@ async function resolveInterviewee(message) {
       return { error: "That member is not in this server." };
     }
 
-    const hostChannelId = message.member.voice.channelId;
-    if (!hostChannelId) {
+    const hostChannel = await getMemberVoiceChannel(hostMember);
+    if (!hostChannel) {
       return { error: "You must be in a voice channel to host an interview." };
     }
 
-    if (member.voice.channelId !== hostChannelId) {
+    const applicantChannel = await getMemberVoiceChannel(member);
+    if (!applicantChannel || applicantChannel.id !== hostChannel.id) {
       return { error: `<@${member.id}> must be in your voice channel.` };
     }
 
-    return { interviewee: member, hostChannel: message.member.voice.channel };
+    return { interviewee: member, hostChannel };
   }
 
-  if (!message.member.voice.channel) {
-    return { error: "Join a voice channel first, then run `-interview`." };
+  const hostChannel = await getMemberVoiceChannel(hostMember);
+  if (!hostChannel) {
+    return { error: "Join a voice channel first, then run `-interview` or `/interview`." };
   }
 
   return {
-    interviewee: message.member,
-    hostChannel: message.member.voice.channel,
+    interviewee: hostMember,
+    hostChannel,
   };
+}
+
+async function startInterview(client, { guild, textChannel, hostMember, interviewee, hostChannel }) {
+  if (getSession(guild.id)) {
+    throw new Error("An interview is already running in this server.");
+  }
+
+  const statusMessage = await textChannel.send(
+    `Joining **${hostChannel.name}** to start the voice interview for <@${interviewee.id}>…`,
+  );
+
+  let voiceSession;
+  try {
+    voiceSession = await joinMemberVoiceChannel(hostMember);
+  } catch (error) {
+    throw new Error(error.message ?? "Could not join the voice channel.");
+  }
+
+  if (voiceSession.voiceChannel.id !== hostChannel.id) {
+    await destroyVoiceSession(voiceSession.connection, voiceSession.player);
+    throw new Error("Could not join your voice channel.");
+  }
+
+  const session = {
+    guildId: guild.id,
+    textChannelId: textChannel.id,
+    voiceChannelId: hostChannel.id,
+    intervieweeId: interviewee.id,
+    startedById: hostMember.id,
+    questionIndex: 0,
+    waitingForSpeech: false,
+    waitingForContinue: false,
+    cancelled: false,
+    connection: voiceSession.connection,
+    player: voiceSession.player,
+    continueMessageId: null,
+  };
+
+  sessions.set(guild.id, session);
+
+  await statusMessage.edit(
+    `Voice interview started for <@${interviewee.id}> in **${hostChannel.name}**.\n` +
+      `Answer each question in voice, then click the red **Continue** button here.`,
+  );
+
+  runQuestion(client, session).catch(async (error) => {
+    console.error("[interview] Question loop failed:", error);
+    await endInterview(client, guild.id, {
+      reason: `The interview stopped: ${error.message ?? "unknown error"}`,
+    });
+  });
 }
 
 async function handleInterviewCommand(message) {
@@ -208,61 +263,95 @@ async function handleInterviewCommand(message) {
   if (hasProcessed(`interview-cmd:${message.id}`)) return true;
   markProcessed(`interview-cmd:${message.id}`);
 
-  if (getSession(message.guild.id)) {
-    await message.reply("An interview is already running in this server.");
-    return true;
-  }
-
-  const resolved = await resolveInterviewee(message);
-  if (resolved.error) {
-    await message.reply(resolved.error);
-    return true;
-  }
-
-  const { interviewee, hostChannel } = resolved;
-
-  let voiceSession;
   try {
-    voiceSession = await joinMemberVoiceChannel(message.member);
-  } catch (error) {
-    await message.reply(error.message ?? "Could not join the voice channel.");
-    return true;
-  }
+    const hostMember = await ensureMessageMember(message);
+    if (!hostMember) {
+      await message.reply("Could not resolve your server membership. Try again in a moment.");
+      return true;
+    }
 
-  if (voiceSession.voiceChannel.id !== hostChannel.id) {
-    await destroyVoiceSession(voiceSession.connection, voiceSession.player);
-    await message.reply("Could not join your voice channel.");
-    return true;
-  }
+    const resolved = await resolveInterviewee(message, hostMember);
+    if (resolved.error) {
+      await message.reply(resolved.error);
+      return true;
+    }
 
-  const session = {
-    guildId: message.guild.id,
-    textChannelId: message.channel.id,
-    voiceChannelId: hostChannel.id,
-    intervieweeId: interviewee.id,
-    startedById: message.author.id,
-    questionIndex: 0,
-    waitingForSpeech: false,
-    waitingForContinue: false,
-    cancelled: false,
-    connection: voiceSession.connection,
-    player: voiceSession.player,
-    continueMessageId: null,
-  };
-
-  sessions.set(message.guild.id, session);
-
-  await message.reply(
-    `Starting voice interview for <@${interviewee.id}> in **${hostChannel.name}**. ` +
-      `Answer each question in voice, then click **Continue** in this channel.`,
-  );
-
-  runQuestion(message.client, session).catch(async (error) => {
-    console.error("[interview] Question loop failed:", error);
-    await endInterview(message.client, message.guild.id, {
-      reason: "The interview stopped because of an error. Please try again.",
+    await startInterview(message.client, {
+      guild: message.guild,
+      textChannel: message.channel,
+      hostMember,
+      interviewee: resolved.interviewee,
+      hostChannel: resolved.hostChannel,
     });
-  });
+  } catch (error) {
+    console.error("[interview] Start failed:", error);
+    await message.reply(error.message ?? "Could not start the interview.").catch(() => null);
+  }
+
+  return true;
+}
+
+function buildInterviewCommand() {
+  return new SlashCommandBuilder()
+    .setName("interview")
+    .setDescription("Start a voice interview in your current voice channel")
+    .addUserOption((option) =>
+      option
+        .setName("member")
+        .setDescription("Optional: staff can interview another member in your VC")
+        .setRequired(false),
+    );
+}
+
+async function handleInterviewSlashCommand(interaction) {
+  if (!interaction.isChatInputCommand() || interaction.commandName !== "interview") {
+    return false;
+  }
+
+  if (!interaction.guild) {
+    await interaction.reply({ content: "This command can only be used in a server.", ephemeral: true });
+    return true;
+  }
+
+  await interaction.deferReply();
+
+  try {
+    const hostMember =
+      interaction.member ??
+      (await interaction.guild.members.fetch(interaction.user.id).catch(() => null));
+
+    if (!hostMember) {
+      await interaction.editReply("Could not resolve your server membership.");
+      return true;
+    }
+
+    const targetUser = interaction.options.getUser("member");
+    const fakeMessage = {
+      guild: interaction.guild,
+      mentions: { users: { first: () => targetUser ?? null } },
+    };
+
+    const resolved = await resolveInterviewee(fakeMessage, hostMember);
+    if (resolved.error) {
+      await interaction.editReply(resolved.error);
+      return true;
+    }
+
+    await startInterview(interaction.client, {
+      guild: interaction.guild,
+      textChannel: interaction.channel,
+      hostMember,
+      interviewee: resolved.interviewee,
+      hostChannel: resolved.hostChannel,
+    });
+
+    await interaction.deleteReply().catch(async () => {
+      await interaction.editReply("Interview started — check the messages above.");
+    });
+  } catch (error) {
+    console.error("[interview] Slash start failed:", error);
+    await interaction.editReply(error.message ?? "Could not start the interview.");
+  }
 
   return true;
 }
@@ -331,7 +420,9 @@ function registerInterviewVoiceHandlers(client) {
 
 module.exports = {
   INTERVIEW_COMMAND,
+  buildInterviewCommand,
   handleInterviewCommand,
+  handleInterviewSlashCommand,
   handleInterviewInteraction,
   registerInterviewVoiceHandlers,
 };

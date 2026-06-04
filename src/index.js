@@ -61,9 +61,13 @@ const { runStartupHealthCheck } = require("./startup-health");
 const { BOT_NAME } = require("./constants");
 const {
   handleInterviewCommand,
+  handleInterviewSlashCommand,
   handleInterviewInteraction,
   registerInterviewVoiceHandlers,
+  buildInterviewCommand,
 } = require("./interview");
+const { handleSilenceCommand } = require("./silence");
+const { ensureVoiceReady } = require("./voice/init");
 
 const BOT_AVATAR_PATH = path.join(__dirname, "..", "assets", "bot-avatar.png");
 
@@ -115,6 +119,7 @@ const commands = [
   buildInfoCommand(),
   buildSetupAuditLogCommand(),
   buildRosterLayoutCommand(),
+  buildInterviewCommand(),
 ].map((command) => command.toJSON());
 
 async function registerCommands() {
@@ -140,6 +145,9 @@ client.once(Events.ClientReady, async (readyClient) => {
   }
 
   restoreRideAlongReminders(readyClient);
+  await ensureVoiceReady().catch((error) => {
+    console.warn("[voice] Init failed:", error.message);
+  });
   restoreQuizApplications(readyClient);
   restoreSupervisorExamApplications(readyClient);
   registerRoleSyncHandlers(readyClient);
@@ -162,6 +170,7 @@ client.on(Events.MessageCreate, async (message) => {
     await handleRideAlongMessage(message);
     await handlePromotionMessage(message);
     await handleInterviewCommand(message);
+    await handleSilenceCommand(message);
   } catch (error) {
     console.error("Message handler error:", error);
   }
@@ -207,6 +216,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
 
     handled = await handleInterviewInteraction(interaction);
+    if (handled) return;
+
+    handled = await handleInterviewSlashCommand(interaction);
     if (handled) return;
 
     handled = await handleStaffPanelCommand(interaction);

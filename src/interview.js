@@ -58,6 +58,7 @@ const RANK_SELECT_PREFIX = "voice_interview_rank:";
 const MODAL_DENY_PREFIX = "voice_interview_deny_modal:";
 const MODAL_ROLEPLAY_PREFIX = "interview_roleplay_modal:";
 const INTERVIEW_START_PREFIX = "interview_start:";
+const INTERVIEW_DASHBOARD_BUTTON_ID = "interview_apply";
 
 const GUIDE_CHANNEL_ID = "1484990957299564666";
 const DEFAULT_SUBMISSIONS_CHANNEL_ID = "1507976263141163008";
@@ -157,7 +158,11 @@ async function promptInterviewRoleplayName(client, { guild, textChannel, hostMem
     createdAt: Date.now(),
   });
 
-  if (interaction && interaction.isChatInputCommand() && interaction.user.id === interviewee.id) {
+  if (
+    interaction &&
+    interaction.user.id === interviewee.id &&
+    (interaction.isChatInputCommand() || interaction.customId === INTERVIEW_DASHBOARD_BUTTON_ID)
+  ) {
     await interaction.showModal(buildRoleplayNameModal(guild.id, interviewee.id));
     return;
   }
@@ -1999,6 +2004,36 @@ async function handleInterviewRoleplayModal(interaction) {
 }
 
 async function handleInterviewInteraction(interaction) {
+  if (interaction.isButton() && interaction.customId === INTERVIEW_DASHBOARD_BUTTON_ID) {
+    if (!interaction.guild) {
+      await interaction.reply({ content: "This can only be used in a server.", ephemeral: true });
+      return true;
+    }
+
+    const member = interaction.member;
+    if (!member) {
+      await interaction.reply({ content: "Could not resolve your server membership.", ephemeral: true });
+      return true;
+    }
+
+    try {
+      await promptInterviewRoleplayName(interaction.client, {
+        guild: interaction.guild,
+        textChannel: interaction.channel,
+        hostMember: member,
+        interviewee: member,
+        interaction,
+      });
+    } catch (error) {
+      await interaction.reply({
+        content: error.message ?? "Could not start the interview.",
+        ephemeral: true,
+      }).catch(() => null);
+    }
+
+    return true;
+  }
+
   if (interaction.isModalSubmit() && interaction.customId.startsWith(MODAL_ROLEPLAY_PREFIX)) {
     return handleInterviewRoleplayModal(interaction);
   }
@@ -2132,6 +2167,7 @@ function registerInterviewVoiceHandlers(client) {
 
 module.exports = {
   INTERVIEW_COMMAND,
+  INTERVIEW_DASHBOARD_BUTTON_ID,
   buildInterviewCommand,
   handleInterviewCommand,
   handleInterviewSlashCommand,

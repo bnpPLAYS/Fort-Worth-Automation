@@ -16,6 +16,7 @@ const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { isOnCooldown, setCooldown, getCooldownRemainingMs } = require("./cooldowns");
 const { getRoleplayNameFromMember, updateMemberCallsign } = require("./discord-callsign");
 const { assignMemberRosterRoles, sendCallsignDm } = require("./member-roster");
+const { pauseRoleSyncForMember, pauseRoleSyncGlobally } = require("./role-sync-guard");
 const { formatRoleplayInitials } = require("./roleplay-name");
 const {
   isSheetsConfigured,
@@ -515,6 +516,13 @@ function buildRideAlongButtons(request) {
 }
 
 async function executeRideAlongPass(interaction, request, applicant, score) {
+  if (score < RIDEALONG_PASSING_SCORE) {
+    await interaction.editReply(
+      `Score **${score}/10** is below **${RIDEALONG_PASSING_SCORE}**. Use **End Ride Along** and submit a failing score instead.`,
+    );
+    return;
+  }
+
   if (!isSheetsConfigured()) {
     await interaction.editReply(
       "Cannot pass ride-along — Google Sheets is not configured on the bot.",
@@ -536,8 +544,12 @@ async function executeRideAlongPass(interaction, request, applicant, score) {
 
   let rosterResult;
   try {
+    pauseRoleSyncGlobally(45_000);
+    pauseRoleSyncForMember(applicant, 120_000);
+
     rosterResult = await promoteToProbationaryOnRoster(roleplayName, {
       currentCallsign: getRosterCallsignForMember(applicant),
+      member: applicant,
     });
   } catch (error) {
     console.error("Ride-along pass roster assignment failed:", error);
@@ -609,16 +621,36 @@ async function executeRideAlongPass(interaction, request, applicant, score) {
 }
 
 async function executeRideAlongFail(interaction, request, applicant, score) {
+  if (score >= RIDEALONG_PASSING_SCORE) {
+    await interaction.editReply(
+      `Score **${score}/10** meets the passing threshold (**${RIDEALONG_PASSING_SCORE}**). Use the pass flow instead.`,
+    );
+    return;
+  }
+
+  pauseRoleSyncGlobally(45_000);
+  pauseRoleSyncForMember(applicant, 120_000);
+
   await applicant.roles.remove(CADET_ROLE_IDS).catch((error) => {
     console.error("Failed to remove cadet roles on fail:", error);
+  });
+  await applicant.roles.remove(PROBATIONARY_OFFICER_ROLE_ID).catch((error) => {
+    console.error("Failed to remove probationary officer role on fail:", error);
   });
   setCooldown(applicant.id, CADET_ENROLL_COOLDOWN_MS, CADET_ENROLL_COOLDOWN_TYPE);
 
   if (isSheetsConfigured()) {
     try {
-      await clearRosterForName(getRoleplayNameFromMember(applicant), {
-        currentCallsign: getRosterCallsignForMember(applicant),
-      });
+      const roleplayName = await resolveRoleplayNameForMember(
+        applicant,
+        request.roleplayName || getRoleplayNameFromMember(applicant),
+      );
+      if (roleplayName) {
+        await clearRosterForName(roleplayName, {
+          currentCallsign: getRosterCallsignForMember(applicant),
+          member: applicant,
+        });
+      }
       removeMemberRosterLink(applicant);
     } catch (error) {
       console.error("Ride-along fail roster clear failed:", error);
@@ -634,7 +666,7 @@ async function executeRideAlongFail(interaction, request, applicant, score) {
   await applicant.user
     .send(
       `Your ride-along has been marked **Failed** (score: **${score}/10**).\n\n` +
-        "Your cadet roles were removed. You may try again in **3 days** using **Become Cadet**.",
+        "Your cadet and probationary roles were removed. You may try again in **3 days** using **Become Cadet**.",
     )
     .catch(() => null);
 

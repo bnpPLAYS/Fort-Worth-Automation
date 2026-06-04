@@ -64,6 +64,7 @@ const {
   handleInterviewSlashCommand,
   handleInterviewInteraction,
   registerInterviewVoiceHandlers,
+  restoreInterviewApplications,
   buildInterviewCommand,
 } = require("./interview");
 const { handleSilenceCommand } = require("./silence");
@@ -149,6 +150,7 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.warn("[voice] Init failed:", error.message);
   });
   restoreQuizApplications(readyClient);
+  restoreInterviewApplications(readyClient);
   restoreSupervisorExamApplications(readyClient);
   registerRoleSyncHandlers(readyClient);
   registerInterviewVoiceHandlers(readyClient);

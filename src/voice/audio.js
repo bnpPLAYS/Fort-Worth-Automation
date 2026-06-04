@@ -149,13 +149,22 @@ async function playFile(player, filePath, { volume = 1 } = {}) {
     player.on("error", onError);
     player.play(resource);
 
+    const playingTimeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Voice playback did not start. Check bot Speak permission and FFmpeg."));
+    }, 30_000);
+
     entersState(player, AudioPlayerStatus.Playing, 30_000)
-      .then(() => entersState(player, AudioPlayerStatus.Idle, 300_000))
+      .then(() => {
+        clearTimeout(playingTimeout);
+        return entersState(player, AudioPlayerStatus.Idle, 120_000);
+      })
       .then(() => {
         cleanup();
         resolve();
       })
       .catch((error) => {
+        clearTimeout(playingTimeout);
         cleanup();
         reject(
           error?.message?.includes("timed out")

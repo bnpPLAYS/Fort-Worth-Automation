@@ -504,7 +504,23 @@ async function getInterviewStatusMessage(client, session) {
   return message;
 }
 
-async function updateInterviewStatusMessage(client, session, options = {}) {
+async function editInterviewPanel(client, session, options = {}, sourceInteraction = null) {
+  const payload = buildInterviewSessionPayload(session, { ...options, forEdit: true });
+  const interaction = sourceInteraction ?? session.statusInteraction;
+
+  if (interaction?.deferred || interaction.replied) {
+    try {
+      const message = await interaction.editReply(payload);
+      session.statusMessage = message;
+      if (message?.id) {
+        session.statusMessageId = message.id;
+      }
+      return message;
+    } catch (error) {
+      console.error("[interview] Panel editReply failed:", error.message, error.code ?? "");
+    }
+  }
+
   const message = await getInterviewStatusMessage(client, session);
   if (!message) {
     console.warn("[interview] Status panel message not available for update.");
@@ -512,15 +528,17 @@ async function updateInterviewStatusMessage(client, session, options = {}) {
   }
 
   try {
-    const edited = await message.edit(
-      buildInterviewSessionPayload(session, { ...options, forEdit: true }),
-    );
+    const edited = await message.edit(payload);
     session.statusMessage = edited;
     return edited;
   } catch (error) {
-    console.error("[interview] Status panel edit failed:", error.message);
+    console.error("[interview] Panel message.edit failed:", error.message, error.code ?? "");
     return null;
   }
+}
+
+async function updateInterviewStatusMessage(client, session, options = {}, sourceInteraction = null) {
+  return editInterviewPanel(client, session, options, sourceInteraction);
 }
 
 async function replyInterviewFailure(interaction, description, { session } = {}) {
@@ -1420,16 +1438,16 @@ async function startInterview(
     if (interviewChannel) {
       await deleteInterviewVoiceChannel(guild, interviewChannel.id);
     }
-    await statusMessage
-      .edit(
-        buildInterviewSessionPayload(bootstrapSession, {
-          title: "Voice Interview — Failed",
-          description: error.message ?? "Could not create the interview voice channel.",
-          statusNote: "Try again or contact staff.",
-          forEdit: true,
-        }),
-      )
-      .catch(() => null);
+    await editInterviewPanel(
+      client,
+      bootstrapSession,
+      {
+        title: "Voice Interview — Failed",
+        description: error.message ?? "Could not create the interview voice channel.",
+        statusNote: "Try again or contact staff.",
+      },
+      interaction,
+    );
     throw error;
   }
 
@@ -1438,28 +1456,27 @@ async function startInterview(
     voiceSession = await joinVoiceChannelById(guild, interviewChannel.id);
   } catch (error) {
     await deleteInterviewVoiceChannel(guild, interviewChannel.id);
-    await statusMessage
-      .edit(
-        buildInterviewSessionPayload(
-          { ...bootstrapSession, voiceChannelName: interviewChannel.name },
-          {
-            title: "Voice Interview — Failed",
-            description: error.message ?? "Could not join the interview voice channel.",
-            statusNote: "Try again or contact staff.",
-            forEdit: true,
-          },
-        ),
-      )
-      .catch(() => null);
+    await editInterviewPanel(
+      client,
+      { ...bootstrapSession, voiceChannelName: interviewChannel.name },
+      {
+        title: "Voice Interview — Failed",
+        description: error.message ?? "Could not join the interview voice channel.",
+        statusNote: "Try again or contact staff.",
+      },
+      interaction,
+    );
     throw new Error(error.message ?? "Could not join the interview voice channel.");
   }
 
+  const statusEphemeral = shouldUseEphemeralInterviewPanel(interaction, interviewee.id);
   const session = {
     guildId: guild.id,
     textChannelId: textChannel.id,
     statusMessage,
     statusMessageId: statusMessage.id,
-    statusEphemeral: shouldUseEphemeralInterviewPanel(interaction, interviewee.id),
+    statusInteraction: statusEphemeral ? interaction : null,
+    statusEphemeral,
     voiceChannelId: interviewChannel.id,
     voiceChannelName: interviewChannel.name,
     createdInterviewChannel: true,
@@ -1964,30 +1981,30 @@ async function advanceInterviewAfterContinue(client, session, interaction) {
   session.waitingForContinue = false;
 
   if (session.questionIndex >= QUESTIONS.length) {
-    await interaction.message
-      .edit(
-        buildInterviewSessionPayload(session, {
-          description: `<@${session.intervieweeId}> Wrapping up your interview…`,
-          statusNote: "Submitting your recording to staff.",
-          actionRows: [],
-          forEdit: true,
-        }),
-      )
-      .catch(() => null);
+    await editInterviewPanel(
+      client,
+      session,
+      {
+        description: `<@${session.intervieweeId}> Wrapping up your interview…`,
+        statusNote: "Submitting your recording to staff.",
+        actionRows: [],
+      },
+      interaction,
+    );
     await finishInterview(client, session);
     return;
   }
 
-  await interaction.message
-    .edit(
-      buildInterviewSessionPayload(session, {
-        description: `<@${session.intervieweeId}> Moving to the next question…`,
-        statusNote: "Listen in voice for the next question.",
-        actionRows: [],
-        forEdit: true,
-      }),
-    )
-    .catch(() => null);
+  await editInterviewPanel(
+    client,
+    session,
+    {
+      description: `<@${session.intervieweeId}> Moving to the next question…`,
+      statusNote: "Listen in voice for the next question.",
+      actionRows: [],
+    },
+    interaction,
+  );
 
   runQuestion(client, session).catch(async (error) => {
     console.error("[interview] Question loop failed:", error);
@@ -2181,11 +2198,16 @@ async function handleInterviewDiscontinueModal(interaction, guildId) {
   session.waitingForContinue = false;
 
   await interaction.deferUpdate();
-  await updateInterviewStatusMessage(interaction.client, session, {
-    description: `<@${session.intervieweeId}> Interview ending early…`,
-    statusNote: session.discontinueReason,
-    actionRows: [],
-  });
+  await editInterviewPanel(
+    interaction.client,
+    session,
+    {
+      description: `<@${session.intervieweeId}> Interview ending early…`,
+      statusNote: session.discontinueReason,
+      actionRows: [],
+    },
+    interaction,
+  );
   await finishInterview(interaction.client, session);
   return true;
 }

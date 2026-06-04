@@ -6,6 +6,8 @@ const { EndBehaviorType } = require("@discordjs/voice");
 const prism = require("prism-media");
 const ffmpegPath = require("ffmpeg-static");
 
+const MIN_PCM_BYTES = 200;
+
 class VoiceInterviewRecorder {
   constructor(connection, userId) {
     this.connection = connection;
@@ -49,12 +51,15 @@ class VoiceInterviewRecorder {
     }
 
     if (this.decoder) {
+      this.decoder.end();
+      await new Promise((resolve) => setTimeout(resolve, 200));
       this.decoder.destroy();
       this.decoder = null;
     }
 
     if (this.fileStream) {
       await new Promise((resolve) => this.fileStream.end(resolve));
+      await new Promise((resolve) => setTimeout(resolve, 150));
       this.fileStream = null;
     }
 
@@ -64,25 +69,31 @@ class VoiceInterviewRecorder {
     }
 
     const { size } = fs.statSync(this.pcmPath);
-    if (size < 500) {
+    if (size < MIN_PCM_BYTES) {
       console.warn(`[interview-recorder] PCM file too small (${size} bytes).`);
       fs.unlink(this.pcmPath, () => {});
       return null;
     }
 
     try {
-      await convertPcmToMp3(this.pcmPath, this.mp3Path);
-      fs.unlink(this.pcmPath, () => {});
-      return this.mp3Path;
+      await convertPcmToMp3(this.pcmPath, this.mp3Path, 2);
     } catch (error) {
-      console.error("[interview-recorder] ffmpeg conversion failed:", error);
-      fs.unlink(this.pcmPath, () => {});
-      return null;
+      console.warn("[interview-recorder] stereo mp3 failed, trying mono:", error.message);
+      try {
+        await convertPcmToMp3(this.pcmPath, this.mp3Path, 1);
+      } catch (monoError) {
+        console.error("[interview-recorder] ffmpeg conversion failed:", monoError.message);
+        fs.unlink(this.pcmPath, () => {});
+        return null;
+      }
     }
+
+    fs.unlink(this.pcmPath, () => {});
+    return this.mp3Path;
   }
 }
 
-function convertPcmToMp3(pcmPath, mp3Path) {
+function convertPcmToMp3(pcmPath, mp3Path, channels = 2) {
   if (!ffmpegPath) {
     return Promise.reject(new Error("FFmpeg is not available."));
   }
@@ -94,7 +105,7 @@ function convertPcmToMp3(pcmPath, mp3Path) {
       "-ar",
       "48000",
       "-ac",
-      "2",
+      String(channels),
       "-i",
       pcmPath,
       "-codec:a",
@@ -105,11 +116,14 @@ function convertPcmToMp3(pcmPath, mp3Path) {
       mp3Path,
     ]);
 
-    ffmpeg.stderr.on("data", () => {});
+    let stderr = "";
+    ffmpeg.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
     ffmpeg.on("error", reject);
     ffmpeg.on("close", (code) => {
       if (code === 0) resolve(mp3Path);
-      else reject(new Error(`ffmpeg exited with code ${code}`));
+      else reject(new Error(`ffmpeg exited with code ${code}: ${stderr.slice(-200)}`));
     });
   });
 }

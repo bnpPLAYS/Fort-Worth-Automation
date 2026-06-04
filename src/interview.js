@@ -11,6 +11,7 @@ const {
   TextInputBuilder,
   TextInputStyle,
 } = require("discord.js");
+const fs = require("fs");
 const { getCooldownEnd, setCooldown } = require("./cooldowns");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { STAFF_PING_ROLE_ID } = require("./constants");
@@ -84,6 +85,41 @@ const retakeInProgress = new Set();
 
 function getSubmissionsChannelId() {
   return process.env.INTERVIEW_SUBMISSIONS_CHANNEL_ID || DEFAULT_SUBMISSIONS_CHANNEL_ID;
+}
+
+async function resolveSubmissionsChannel(client, guildId) {
+  const channelId = getSubmissionsChannelId();
+  let channel = await client.channels.fetch(channelId).catch(() => null);
+
+  if (!channel?.isTextBased() && guildId) {
+    const guild = await client.guilds.fetch(guildId).catch(() => null);
+    channel = await guild?.channels.fetch(channelId).catch(() => null);
+  }
+
+  return channel?.isTextBased() ? channel : null;
+}
+
+function buildRecordingAttachment(recordingPath, application, { retakeQuestionIndex } = {}) {
+  if (!recordingPath || !fs.existsSync(recordingPath)) {
+    return null;
+  }
+
+  const safeTag = application.userTag.replace(/[^a-z0-9-_]/gi, "-");
+  const name =
+    retakeQuestionIndex == null
+      ? `voice-interview-${safeTag}.mp3`
+      : `voice-interview-retake-q${retakeQuestionIndex + 1}-${safeTag}.mp3`;
+
+  return new AttachmentBuilder(recordingPath, { name });
+}
+
+async function sendSubmissionPanel(channel, application, appId, { skipStaffPing = false } = {}) {
+  const payload = buildSubmissionPayload(application, {
+    actionRows: [buildReviewButtons(appId)],
+    skipStaffPing,
+  });
+
+  return channel.send(payload);
 }
 
 function formatDuration(ms) {
@@ -323,7 +359,7 @@ function buildRankSelect(appId) {
   );
 }
 
-function buildSubmissionPayload(application, { actionRows = [], forEdit = false } = {}) {
+function buildSubmissionPayload(application, { actionRows = [], forEdit = false, skipStaffPing = false } = {}) {
   const {
     userId,
     userTag,
@@ -337,7 +373,7 @@ function buildSubmissionPayload(application, { actionRows = [], forEdit = false 
     voiceChannelName,
     hasRecording,
     notes,
-    discontinueEarly,
+    discontinuedEarly,
     discontinueReason,
     retakeRequests,
   } = application;
@@ -422,12 +458,13 @@ function buildSubmissionPayload(application, { actionRows = [], forEdit = false 
   return builder({
     title,
     description:
-      (status === "pending" ? `<@&${STAFF_PING_ROLE_ID}>\n\n` : "") +
+      (status === "pending" && !skipStaffPing ? `<@&${STAFF_PING_ROLE_ID}>\n\n` : "") +
       `Applicant: <@${userId}> (\`${userTag}\`)\nUser ID: \`${userId}\``,
     fields,
     footer: footerParts.length > 0 ? footerParts.join(" · ") : undefined,
     actionRows,
-    allowedMentions: status === "pending" ? { roles: [STAFF_PING_ROLE_ID] } : undefined,
+    allowedMentions:
+      status === "pending" && !skipStaffPing ? { roles: [STAFF_PING_ROLE_ID] } : undefined,
   });
 }
 
@@ -513,6 +550,9 @@ async function submitInterviewApplication(client, session, recordingPath) {
   const submittedAt = Date.now();
   const appId = `${session.intervieweeId}-${submittedAt}`;
   const roleplayName = member ? getRoleplayNameFromMember(member) : null;
+  const recordingAttachment = buildRecordingAttachment(recordingPath, {
+    userTag: user?.tag ?? session.intervieweeId,
+  });
 
   const application = {
     appId,
@@ -524,7 +564,7 @@ async function submitInterviewApplication(client, session, recordingPath) {
     submittedAt,
     status: "pending",
     voiceChannelName: session.voiceChannelName,
-    hasRecording: Boolean(recordingPath),
+    hasRecording: Boolean(recordingAttachment),
     notes: session.notes ?? [],
     discontinuedEarly: Boolean(session.discontinuedEarly),
     discontinueReason: session.discontinueReason ?? "",
@@ -532,53 +572,50 @@ async function submitInterviewApplication(client, session, recordingPath) {
 
   persistApplication(application);
 
-  const submissionsChannel = await client.channels.fetch(getSubmissionsChannelId()).catch(() => null);
-  if (!submissionsChannel?.isTextBased()) {
-    throw new Error("The interview submissions channel could not be found.");
-  }
-
-  const files = [];
-  if (recordingPath) {
-    files.push(
-      new AttachmentBuilder(recordingPath, {
-        name: `voice-interview-${application.userTag.replace(/[^a-z0-9-_]/gi, "-")}.mp3`,
-      }),
+  const submissionsChannel = await resolveSubmissionsChannel(client, session.guildId);
+  if (!submissionsChannel) {
+    throw new Error(
+      `The interview submissions channel could not be found (ID: ${getSubmissionsChannelId()}).`,
     );
   }
 
+  let submissionMessage;
   try {
-    const submissionMessage = await submissionsChannel.send({
-      ...buildSubmissionPayload(application, { actionRows: [buildReviewButtons(appId)] }),
-      files,
+    submissionMessage = await sendSubmissionPanel(submissionsChannel, application, appId);
+  } catch (error) {
+    console.error("[interview] Submission panel send failed:", error.message, error.code ?? "");
+    submissionMessage = await sendSubmissionPanel(submissionsChannel, application, appId, {
+      skipStaffPing: true,
     });
+  }
 
-    application.messageId = submissionMessage.id;
-    application.channelId = submissionsChannel.id;
-    persistApplication(application);
+  application.messageId = submissionMessage.id;
+  application.channelId = submissionsChannel.id;
+  persistApplication(application);
 
-    if (recordingPath && submissionMessage.attachments.size === 0) {
-      console.warn("[interview] Recording was not attached to submission message; sending follow-up.");
-      const followUp = await submissionsChannel.send({
-        content: `<@${application.userId}> Voice interview recording`,
-        files,
+  if (recordingAttachment) {
+    try {
+      const recordingMessage = await submissionsChannel.send({
+        content:
+          `<@${application.userId}> **Voice interview recording** (${formatDuration(application.durationMs)})`,
+        files: [recordingAttachment],
         reply: { messageReference: submissionMessage.id, failIfNotExists: false },
       });
-      application.recordingMessageId = followUp.id;
+      application.recordingMessageId = recordingMessage.id;
+      application.hasRecording = true;
       persistApplication(application);
-    }
-  } catch (error) {
-    if (files.length > 0 && /413|file/i.test(error.message ?? "")) {
-      const submissionMessage = await submissionsChannel.send({
-        ...buildSubmissionPayload(application, {
-          actionRows: [buildReviewButtons(appId)],
-        }),
-      });
-      application.messageId = submissionMessage.id;
-      application.channelId = submissionsChannel.id;
+    } catch (error) {
+      console.error("[interview] Recording attachment send failed:", error.message, error.code ?? "");
       application.hasRecording = false;
       persistApplication(application);
-    } else {
-      throw error;
+      await submissionMessage
+        .edit(
+          buildSubmissionPayload(application, {
+            forEdit: true,
+            actionRows: [buildReviewButtons(appId)],
+          }),
+        )
+        .catch(() => null);
     }
   }
 
@@ -620,56 +657,45 @@ async function submitRetakeRecording(client, application, questionIndex, recordi
     throw new Error("The interview submissions channel could not be found.");
   }
 
-  retakeRequest.hasRecording = Boolean(recordingPath);
+  const recordingAttachment = buildRecordingAttachment(recordingPath, application, {
+    retakeQuestionIndex: questionIndex,
+  });
+
+  retakeRequest.hasRecording = Boolean(recordingAttachment);
   retakeRequest.status = "completed";
   retakeRequest.completedAt = Date.now();
   persistApplication(application);
 
-  const files = [];
-  if (recordingPath) {
-    files.push(
-      new AttachmentBuilder(recordingPath, {
-        name: `voice-interview-retake-q${questionIndex + 1}-${application.userTag.replace(/[^a-z0-9-_]/gi, "-")}.mp3`,
-      }),
-    );
-  }
-
   const submissionMessage = await channel.send({
     ...buildRetakeSubmissionPayload(application, questionIndex, retakeRequest),
-    files,
     reply: { messageReference: application.messageId, failIfNotExists: false },
   });
 
   retakeRequest.retakeMessageId = submissionMessage.id;
   persistApplication(application);
 
-  if (recordingPath && submissionMessage.attachments.size === 0 && files.length > 0) {
-    const followUp = await channel.send({
-      content: `Re-answer recording for question ${questionIndex + 1}`,
-      files,
-      reply: { messageReference: submissionMessage.id, failIfNotExists: false },
-    });
-    retakeRequest.recordingMessageId = followUp.id;
-    persistApplication(application);
+  if (recordingAttachment) {
+    try {
+      const recordingMessage = await channel.send({
+        content: `Re-answer recording for question ${questionIndex + 1}`,
+        files: [recordingAttachment],
+        reply: { messageReference: submissionMessage.id, failIfNotExists: false },
+      });
+      retakeRequest.recordingMessageId = recordingMessage.id;
+      retakeRequest.hasRecording = true;
+      persistApplication(application);
+    } catch (error) {
+      console.error("[interview] Retake recording send failed:", error.message, error.code ?? "");
+      retakeRequest.hasRecording = false;
+      persistApplication(application);
+    }
   }
 
   if (recordingPath) {
     deleteTempFile(recordingPath);
   }
 
-  const originalChannel = await client.channels.fetch(application.channelId).catch(() => null);
-  const originalMessage = await originalChannel?.messages
-    .fetch(application.messageId)
-    .catch(() => null);
-  if (originalMessage) {
-    await originalMessage.edit(
-      buildSubmissionPayload(application, {
-        forEdit: true,
-        actionRows: application.status === "pending" ? [buildReviewButtons(application.appId)] : [],
-      }),
-    );
-  }
-
+  await refreshInterviewSubmissionMessage(client, application);
   return submissionMessage;
 }
 
@@ -984,20 +1010,29 @@ async function finishInterview(client, session) {
   }
 
   let submissionFailed = false;
+  let submissionHasRecording = false;
 
   try {
-    await submitInterviewApplication(client, session, recordingPath);
+    const application = await submitInterviewApplication(client, session, recordingPath);
+    submissionHasRecording = Boolean(application.hasRecording);
   } catch (error) {
-    console.error("[interview] Submission failed:", error);
+    console.error("[interview] Submission failed:", error.message, error.code ?? "", error.stack);
     submissionFailed = true;
+  }
+
+  let statusNote = "Staff will review your recording shortly.";
+  if (submissionFailed) {
+    statusNote =
+      "Staff could not be notified automatically. Contact an administrator and mention your interview time.";
+  } else if (!submissionHasRecording) {
+    statusNote =
+      "Your submission was sent to staff, but no voice recording was captured. Contact staff if needed.";
   }
 
   await updateInterviewStatusMessage(client, session, {
     title: submissionFailed ? "Voice Interview — Submission Issue" : "Voice Interview — Submitted",
     description: `<@${session.intervieweeId}> ${closingLine}`,
-    statusNote: submissionFailed
-      ? "Your interview was recorded, but staff could not be notified automatically. Contact an administrator."
-      : "Staff will review your recording shortly.",
+    statusNote,
     actionRows: [],
   }).catch(() => null);
 

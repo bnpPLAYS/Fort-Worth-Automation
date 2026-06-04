@@ -497,7 +497,9 @@ function buildSubmissionPayload(application, { actionRows = [], forEdit = false,
     { name: "Voice Channel", value: voiceChannelName ?? "Unknown" },
     {
       name: "Recording",
-      value: hasRecording ? "Attached below — all answers were recorded in voice." : "No audio captured.",
+      value: hasRecording
+        ? "Attached below — includes each spoken question and the applicant's voice answers."
+        : "No audio captured.",
     },
   ];
 
@@ -516,7 +518,7 @@ function buildSubmissionPayload(application, { actionRows = [], forEdit = false,
   });
   fields.push({
     name: "Responses",
-    value: "All answers were given in voice — listen to the attached recording.",
+    value: "Answers were given in voice — the recording includes both questions and responses.",
   });
 
   if (discontinuedEarly) {
@@ -581,7 +583,13 @@ function buildSubmissionPayload(application, { actionRows = [], forEdit = false,
 async function speakText(session, text) {
   const filePath = await synthesizeSpeech(text);
   try {
+    if (session.recorder) {
+      await session.recorder.addTtsSegment(filePath);
+    }
     await playFile(session.player, filePath);
+    if (session.recorder) {
+      session.recorder.resumeUserCapture();
+    }
   } finally {
     deleteTempFile(filePath);
   }
@@ -754,7 +762,7 @@ function buildRetakeSubmissionPayload(application, questionIndex, retakeRequest,
       {
         name: "Recording",
         value: retakeRequest.hasRecording
-          ? "Attached below."
+          ? "Attached below — includes the spoken question and the applicant's re-answer."
           : "No audio captured for this re-answer.",
       },
     ],
@@ -845,17 +853,17 @@ async function runRetakeAnswer(client, application, questionIndex, retakeRequest
     throw error;
   }
 
+  const recorder = new VoiceInterviewRecorder(voiceSession.connection, member.id);
   const voiceSessionState = {
     connection: voiceSession.connection,
     player: voiceSession.player,
     intervieweeId: member.id,
+    recorder,
   };
-
-  const recorder = new VoiceInterviewRecorder(voiceSession.connection, member.id);
   let recordingPath = null;
 
   try {
-    recorder.start();
+    recorder.startSession();
     const questionNumber = questionIndex + 1;
     const question = QUESTIONS[questionIndex];
     await speakText(voiceSessionState, `Question ${questionNumber}. ${question}`);
@@ -1184,6 +1192,9 @@ async function endInterview(client, guildId, { reason, silent = false } = {}) {
 
 async function runInterviewLoop(client, session) {
   try {
+    session.recorder.startSession();
+    session.startedAt = Date.now();
+
     await speakText(
       session,
       "This voice interview is being recorded for staff review. Please answer each question clearly when prompted.",
@@ -1191,8 +1202,6 @@ async function runInterviewLoop(client, session) {
 
     if (session.cancelled) return;
 
-    session.recorder.start();
-    session.startedAt = Date.now();
     await runQuestion(client, session);
   } catch (error) {
     console.error("[interview] Loop failed:", error);

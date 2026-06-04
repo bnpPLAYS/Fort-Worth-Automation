@@ -17,6 +17,7 @@ const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { STAFF_PING_ROLE_ID } = require("./constants");
 const { buildV2Payload, buildV2EditPayload } = require("./v2-message");
 const { getRoleplayNameFromMember } = require("./discord-callsign");
+const { formatRoleplayInitials } = require("./roleplay-name");
 const { isSheetsConfigured } = require("./google-sheets/client");
 const { completeMemberRosterSetup } = require("./roster-onboarding");
 const { logRosterAudit } = require("./roster-audit-log");
@@ -55,6 +56,8 @@ const ASK_AGAIN_SELECT_PREFIX = "voice_interview_ask_again_select:";
 const RETAKE_READY_PREFIX = "voice_interview_retake_ready:";
 const RANK_SELECT_PREFIX = "voice_interview_rank:";
 const MODAL_DENY_PREFIX = "voice_interview_deny_modal:";
+const MODAL_ROLEPLAY_PREFIX = "interview_roleplay_modal:";
+const INTERVIEW_START_PREFIX = "interview_start:";
 
 const GUIDE_CHANNEL_ID = "1484990957299564666";
 const DEFAULT_SUBMISSIONS_CHANNEL_ID = "1507976263141163008";
@@ -82,6 +85,100 @@ const RANKS = RANK_OPTIONS.filter((rank) => !rank.useCadetCallsign).map((rank) =
 const sessions = new Map();
 const applications = new Map();
 const retakeInProgress = new Set();
+const pendingInterviewStarts = new Map();
+
+const PENDING_INTERVIEW_TTL_MS = 30 * 60 * 1000;
+
+function pendingInterviewKey(guildId, intervieweeId) {
+  return `${guildId}:${intervieweeId}`;
+}
+
+function getPendingInterviewStart(guildId, intervieweeId) {
+  const pending = pendingInterviewStarts.get(pendingInterviewKey(guildId, intervieweeId));
+  if (!pending) return null;
+
+  if (Date.now() - pending.createdAt > PENDING_INTERVIEW_TTL_MS) {
+    pendingInterviewStarts.delete(pendingInterviewKey(guildId, intervieweeId));
+    return null;
+  }
+
+  return pending;
+}
+
+function buildRoleplayNameModal(guildId, intervieweeId) {
+  return new ModalBuilder()
+    .setCustomId(`${MODAL_ROLEPLAY_PREFIX}${guildId}:${intervieweeId}`)
+    .setTitle("Voice Interview — Roleplay Name")
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("roleplay_name")
+          .setLabel("Full roleplay name")
+          .setPlaceholder("John Smith (roster name will be J. Smith)")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(100),
+      ),
+    );
+}
+
+function buildInterviewStartButton(guildId, intervieweeId) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${INTERVIEW_START_PREFIX}${guildId}:${intervieweeId}`)
+      .setLabel("Enter Roleplay Name & Start")
+      .setStyle(ButtonStyle.Primary),
+  );
+}
+
+function buildRoleplayPromptDescription(interviewee, hostMember) {
+  const intro =
+    hostMember.id === interviewee.id
+      ? `<@${interviewee.id}> Before your voice interview begins, enter your **full roleplay name**.`
+      : `<@${interviewee.id}> Staff started a voice interview for you. Enter your **full roleplay name** before joining voice.`;
+
+  return (
+    `${intro}\n\n` +
+    "Example: **John Smith** → roster name **J. Smith**\n\n" +
+    "If you pass, this name is used to add you to the roster."
+  );
+}
+
+async function promptInterviewRoleplayName(client, { guild, textChannel, hostMember, interviewee, interaction }) {
+  if (getSession(guild.id)) {
+    throw new Error("An interview is already running in this server.");
+  }
+
+  pendingInterviewStarts.set(pendingInterviewKey(guild.id, interviewee.id), {
+    guildId: guild.id,
+    textChannelId: textChannel.id,
+    hostMemberId: hostMember.id,
+    intervieweeId: interviewee.id,
+    createdAt: Date.now(),
+  });
+
+  if (interaction && interaction.isChatInputCommand() && interaction.user.id === interviewee.id) {
+    await interaction.showModal(buildRoleplayNameModal(guild.id, interviewee.id));
+    return;
+  }
+
+  await textChannel.send(
+    buildV2Payload({
+      withTicketBanner: true,
+      title: "Voice Interview — Roleplay Name Required",
+      description: buildRoleplayPromptDescription(interviewee, hostMember),
+      actionRows: [buildInterviewStartButton(guild.id, interviewee.id)],
+      allowedMentions: { users: [interviewee.id] },
+    }),
+  );
+
+  if (interaction && interaction.isChatInputCommand() && interaction.user.id !== interviewee.id) {
+    await interaction.reply({
+      content: `Waiting for <@${interviewee.id}> to enter their roleplay name and start.`,
+      ephemeral: true,
+    });
+  }
+}
 
 function getSubmissionsChannelId() {
   return process.env.INTERVIEW_SUBMISSIONS_CHANNEL_ID || DEFAULT_SUBMISSIONS_CHANNEL_ID;
@@ -213,6 +310,15 @@ function buildInterviewSessionFields(session, { statusNote, micWarning = false }
       value: session.voiceChannelName ? `#${session.voiceChannelName}` : "Setting up…",
     },
   ];
+
+  if (session.roleplayName) {
+    fields.push({
+      name: "Roster Name",
+      value: session.roleplayNameRaw
+        ? `${session.roleplayName} *(from ${session.roleplayNameRaw})*`
+        : session.roleplayName,
+    });
+  }
 
   if (session.startedAt || session.questionIndex > 0 || session.waitingForContinue) {
     fields.push({
@@ -364,6 +470,7 @@ function buildSubmissionPayload(application, { actionRows = [], forEdit = false,
     userId,
     userTag,
     roleplayName,
+    roleplayNameRaw,
     durationMs,
     status,
     reviewerTag,
@@ -395,7 +502,10 @@ function buildSubmissionPayload(application, { actionRows = [], forEdit = false,
   ];
 
   if (roleplayName) {
-    fields.push({ name: "Roster Name", value: roleplayName });
+    fields.push({
+      name: "Roster Name",
+      value: roleplayNameRaw ? `${roleplayName} *(from ${roleplayNameRaw})*` : roleplayName,
+    });
   }
 
   fields.push({
@@ -549,7 +659,8 @@ async function submitInterviewApplication(client, session, recordingPath) {
   const user = member?.user ?? (await client.users.fetch(session.intervieweeId).catch(() => null));
   const submittedAt = Date.now();
   const appId = `${session.intervieweeId}-${submittedAt}`;
-  const roleplayName = member ? getRoleplayNameFromMember(member) : null;
+  const roleplayName =
+    session.roleplayName ?? (member ? getRoleplayNameFromMember(member) : null);
   const recordingAttachment = buildRecordingAttachment(recordingPath, {
     userTag: user?.tag ?? session.intervieweeId,
   });
@@ -560,6 +671,7 @@ async function submitInterviewApplication(client, session, recordingPath) {
     userTag: user?.tag ?? session.intervieweeId,
     guildId: session.guildId,
     roleplayName,
+    roleplayNameRaw: session.roleplayNameRaw,
     durationMs: session.startedAt ? submittedAt - session.startedAt : 0,
     submittedAt,
     status: "pending",
@@ -1111,15 +1223,23 @@ async function resolveInterviewee(message, hostMember) {
   return { interviewee: hostMember };
 }
 
-async function startInterview(client, { guild, textChannel, hostMember, interviewee }) {
+async function startInterview(
+  client,
+  { guild, textChannel, hostMember, interviewee, roleplayName, roleplayNameRaw },
+) {
   if (getSession(guild.id)) {
     throw new Error("An interview is already running in this server.");
+  }
+
+  if (!roleplayName) {
+    throw new Error("A roleplay name is required before starting the interview.");
   }
 
   const bootstrapSession = {
     intervieweeId: interviewee.id,
     questionIndex: 0,
     notes: [],
+    roleplayName,
   };
 
   const statusMessage = await textChannel.send(
@@ -1180,6 +1300,8 @@ async function startInterview(client, { guild, textChannel, hostMember, intervie
     createdInterviewChannel: true,
     intervieweeId: interviewee.id,
     startedById: hostMember.id,
+    roleplayName,
+    roleplayNameRaw,
     questionIndex: 0,
     waitingForSpeech: false,
     waitingForContinue: false,
@@ -1199,7 +1321,9 @@ async function startInterview(client, { guild, textChannel, hostMember, intervie
   await updateInterviewStatusMessage(client, session, {
     description:
       `<@${session.intervieweeId}> Your voice interview is in progress in ${interviewChannel}.\n\n` +
-      `Only you can join that channel. This session **is being recorded**.\n` +
+      `Roster name: **${roleplayName}**` +
+      (roleplayNameRaw ? ` *(from ${roleplayNameRaw})*` : "") +
+      `\nOnly you can join that channel. This session **is being recorded**.\n` +
       `Answer each question in voice, then use the panel on this message when you're ready.`,
     statusNote: "Starting interview…",
   });
@@ -1463,7 +1587,7 @@ async function handleInterviewCommand(message) {
       return true;
     }
 
-    await startInterview(message.client, {
+    await promptInterviewRoleplayName(message.client, {
       guild: message.guild,
       textChannel: message.channel,
       hostMember,
@@ -1480,7 +1604,7 @@ async function handleInterviewCommand(message) {
 function buildInterviewCommand() {
   return new SlashCommandBuilder()
     .setName("interview")
-    .setDescription("Start a voice interview — creates a private VC for the applicant")
+    .setDescription("Start a voice interview — enter roleplay name, then join private VC")
     .addUserOption((option) =>
       option
         .setName("member")
@@ -1499,15 +1623,13 @@ async function handleInterviewSlashCommand(interaction) {
     return true;
   }
 
-  await interaction.deferReply();
-
   try {
     const hostMember =
       interaction.member ??
       (await interaction.guild.members.fetch(interaction.user.id).catch(() => null));
 
     if (!hostMember) {
-      await interaction.editReply("Could not resolve your server membership.");
+      await interaction.reply({ content: "Could not resolve your server membership.", ephemeral: true });
       return true;
     }
 
@@ -1519,23 +1641,27 @@ async function handleInterviewSlashCommand(interaction) {
 
     const resolved = await resolveInterviewee(fakeMessage, hostMember);
     if (resolved.error) {
-      await interaction.editReply(resolved.error);
+      await interaction.reply({ content: resolved.error, ephemeral: true });
       return true;
     }
 
-    await startInterview(interaction.client, {
+    await promptInterviewRoleplayName(interaction.client, {
       guild: interaction.guild,
       textChannel: interaction.channel,
       hostMember,
       interviewee: resolved.interviewee,
-    });
-
-    await interaction.deleteReply().catch(async () => {
-      await interaction.editReply("Interview started — check the message above.");
+      interaction,
     });
   } catch (error) {
     console.error("[interview] Slash start failed:", error);
-    await interaction.editReply(error.message ?? "Could not start the interview.");
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(error.message ?? "Could not start the interview.").catch(() => null);
+    } else {
+      await interaction.reply({
+        content: error.message ?? "Could not start the interview.",
+        ephemeral: true,
+      });
+    }
   }
 
   return true;
@@ -1768,7 +1894,106 @@ async function handleInterviewDiscontinueModal(interaction, guildId) {
   return true;
 }
 
+async function handleInterviewStartButton(interaction) {
+  const payload = interaction.customId.slice(INTERVIEW_START_PREFIX.length);
+  const separatorIndex = payload.indexOf(":");
+  if (separatorIndex <= 0) return false;
+
+  const guildId = payload.slice(0, separatorIndex);
+  const intervieweeId = payload.slice(separatorIndex + 1);
+
+  if (interaction.user.id !== intervieweeId) {
+    await interaction.reply({
+      content: "Only the person being interviewed can enter their roleplay name.",
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  const pending = getPendingInterviewStart(guildId, intervieweeId);
+  if (!pending) {
+    await interaction.reply({
+      content: "This interview prompt expired. Run `-interview` or `/interview` again.",
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  await interaction.showModal(buildRoleplayNameModal(guildId, intervieweeId));
+  return true;
+}
+
+async function handleInterviewRoleplayModal(interaction) {
+  const payload = interaction.customId.slice(MODAL_ROLEPLAY_PREFIX.length);
+  const separatorIndex = payload.indexOf(":");
+  if (separatorIndex <= 0) return false;
+
+  const guildId = payload.slice(0, separatorIndex);
+  const intervieweeId = payload.slice(separatorIndex + 1);
+
+  if (interaction.user.id !== intervieweeId) {
+    await interaction.reply({ content: "This form is not for you.", ephemeral: true });
+    return true;
+  }
+
+  const pending = getPendingInterviewStart(guildId, intervieweeId);
+  if (!pending) {
+    await interaction.reply({
+      content: "This interview prompt expired. Run `-interview` or `/interview` again.",
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  let roleplayName;
+  let roleplayNameRaw;
+  try {
+    roleplayNameRaw = interaction.fields.getTextInputValue("roleplay_name").trim();
+    roleplayName = formatRoleplayInitials(roleplayNameRaw);
+  } catch (error) {
+    await interaction.reply({ content: error.message, ephemeral: true });
+    return true;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const guild = await interaction.client.guilds.fetch(guildId).catch(() => null);
+  const textChannel = await interaction.client.channels.fetch(pending.textChannelId).catch(() => null);
+  const hostMember = await guild?.members.fetch(pending.hostMemberId).catch(() => null);
+  const interviewee = await guild?.members.fetch(intervieweeId).catch(() => null);
+
+  if (!guild || !textChannel?.isTextBased() || !hostMember || !interviewee) {
+    await interaction.editReply("Could not start the interview. Try again.");
+    return true;
+  }
+
+  pendingInterviewStarts.delete(pendingInterviewKey(guildId, intervieweeId));
+
+  try {
+    await startInterview(interaction.client, {
+      guild,
+      textChannel,
+      hostMember,
+      interviewee,
+      roleplayName,
+      roleplayNameRaw,
+    });
+    await interaction.editReply(
+      `Roster name **${roleplayName}** saved. Your voice interview is starting now.`,
+    );
+  } catch (error) {
+    console.error("[interview] Start after roleplay modal failed:", error);
+    await interaction.editReply(error.message ?? "Could not start the interview.");
+  }
+
+  return true;
+}
+
 async function handleInterviewInteraction(interaction) {
+  if (interaction.isModalSubmit() && interaction.customId.startsWith(MODAL_ROLEPLAY_PREFIX)) {
+    return handleInterviewRoleplayModal(interaction);
+  }
+
   if (interaction.isModalSubmit() && interaction.customId.startsWith(MODAL_DISCONTINUE_PREFIX)) {
     const guildId = interaction.customId.slice(MODAL_DISCONTINUE_PREFIX.length);
     return handleInterviewDiscontinueModal(interaction, guildId);
@@ -1811,6 +2036,10 @@ async function handleInterviewInteraction(interaction) {
 
   if (interaction.isButton() && interaction.customId.startsWith(RETAKE_READY_PREFIX)) {
     return handleInterviewRetakeReady(interaction);
+  }
+
+  if (interaction.isButton() && interaction.customId.startsWith(INTERVIEW_START_PREFIX)) {
+    return handleInterviewStartButton(interaction);
   }
 
   if (interaction.isButton() && interaction.customId.startsWith(CONTINUE_PREFIX)) {

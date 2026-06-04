@@ -102,10 +102,14 @@ const STAGE_TWO_FIELDS = [
   },
 ];
 
-const { RANK_OPTIONS, resolveRankForRosterAdd } = require("./rank-options");
+const {
+  RANK_OPTIONS,
+  resolveAssignmentRoleIds,
+  assignRankRolesToMember,
+} = require("./rank-options");
 
 const RANKS = RANK_OPTIONS.filter((rank) => !rank.useCadetCallsign).map((rank) => ({
-  id: rank.discordRoleIds[0],
+  id: rank.id,
   label: rank.label,
 }));
 
@@ -623,8 +627,8 @@ async function handleInteraction(interaction) {
   if (interaction.isStringSelectMenu() && interaction.customId.startsWith(RANK_SELECT_PREFIX)) {
     const appId = interaction.customId.slice(RANK_SELECT_PREFIX.length);
     const application = getApplication(appId);
-    const roleId = interaction.values[0];
-    const rank = RANKS.find((r) => r.id === roleId);
+    const rankValue = interaction.values[0];
+    const rank = RANKS.find((entry) => entry.id === rankValue);
 
     if (!application || application.status !== "pending") {
       await interaction.reply({ content: "This application is no longer pending.", ephemeral: true });
@@ -644,13 +648,16 @@ async function handleInteraction(interaction) {
     const guild = await interaction.client.guilds.fetch(application.guildId).catch(() => null);
     const member = await guild?.members.fetch(application.userId).catch(() => null);
     const rankLabel = rank?.label ?? "Unknown Rank";
-    const rankOption = RANK_OPTIONS.find((option) => option.discordRoleIds.includes(roleId));
-    const { sheetRank } = resolveRankForRosterAdd(guild, rankOption?.id ?? rankLabel);
+    const { sheetRank, discordRoleIds } = await resolveAssignmentRoleIds(guild, rankValue);
 
+    let roleSummary = "";
     if (member && guild) {
-      await member.roles.add(roleId, "Quiz accepted").catch((error) => {
-        console.error("Failed to assign role:", error);
-      });
+      const roleResult = await assignRankRolesToMember(member, rankValue, "Quiz accepted");
+      if (roleResult.error) {
+        roleSummary = `\nDiscord roles: assignment failed (${roleResult.error}).`;
+      } else if (roleResult.added.length === 0) {
+        roleSummary = "\nDiscord roles: member already had the assigned rank roles.";
+      }
     }
 
     let rosterSummary = "";
@@ -689,7 +696,7 @@ async function handleInteraction(interaction) {
 
     application.status = "accepted";
     application.rankLabel = rankLabel;
-    application.rankId = roleId;
+    application.rankId = discordRoleIds[0] ?? rankValue;
     application.reviewerTag = interaction.user.tag;
     persistApplication(application);
 
@@ -728,7 +735,8 @@ async function handleInteraction(interaction) {
     }
 
     await interaction.editReply({
-      content: `Application accepted. **${application.userTag}** was assigned **${application.rankLabel}**.${rosterSummary}`,
+      content:
+        `Application accepted. **${application.userTag}** was assigned **${application.rankLabel}**.${roleSummary}${rosterSummary}`,
       components: [],
     });
     return true;

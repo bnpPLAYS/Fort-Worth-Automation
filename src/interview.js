@@ -21,7 +21,11 @@ const { formatRoleplayInitials } = require("./roleplay-name");
 const { isSheetsConfigured } = require("./google-sheets/client");
 const { completeMemberRosterSetup } = require("./roster-onboarding");
 const { logRosterAudit } = require("./roster-audit-log");
-const { RANK_OPTIONS, resolveRankForRosterAdd } = require("./rank-options");
+const {
+  RANK_OPTIONS,
+  resolveAssignmentRoleIds,
+  assignRankRolesToMember,
+} = require("./rank-options");
 const {
   getInterviewApplication,
   saveInterviewApplication,
@@ -83,7 +87,7 @@ const QUESTIONS = [
 ];
 
 const RANKS = RANK_OPTIONS.filter((rank) => !rank.useCadetCallsign).map((rank) => ({
-  id: rank.discordRoleIds[0],
+  id: rank.id,
   label: rank.label,
 }));
 
@@ -1434,35 +1438,38 @@ async function handleInterviewAccept(interaction, appId) {
 
 async function handleInterviewRankSelect(interaction, appId) {
   const application = getApplication(appId);
-  const roleId = interaction.values[0];
-  const rank = RANKS.find((entry) => entry.id === roleId);
+    const rankValue = interaction.values[0];
+    const rank = RANKS.find((entry) => entry.id === rankValue);
 
-  if (!application || application.status !== "pending") {
-    await interaction.reply({ content: "This interview submission is no longer pending.", ephemeral: true });
-    return true;
-  }
+    if (!application || application.status !== "pending") {
+      await interaction.reply({ content: "This interview submission is no longer pending.", ephemeral: true });
+      return true;
+    }
 
-  if (!canReviewInterview(interaction.member)) {
-    await interaction.reply({
-      content: "You need **Manage Roles** or **Manage Server** to review interviews.",
-      ephemeral: true,
-    });
-    return true;
-  }
+    if (!canReviewInterview(interaction.member)) {
+      await interaction.reply({
+        content: "You need **Manage Roles** or **Manage Server** to review interviews.",
+        ephemeral: true,
+      });
+      return true;
+    }
 
-  await interaction.deferUpdate();
+    await interaction.deferUpdate();
 
-  const guild = await interaction.client.guilds.fetch(application.guildId).catch(() => null);
-  const member = await guild?.members.fetch(application.userId).catch(() => null);
-  const rankLabel = rank?.label ?? "Unknown Rank";
-  const rankOption = RANK_OPTIONS.find((option) => option.discordRoleIds.includes(roleId));
-  const { sheetRank } = resolveRankForRosterAdd(guild, rankOption?.id ?? rankLabel);
+    const guild = await interaction.client.guilds.fetch(application.guildId).catch(() => null);
+    const member = await guild?.members.fetch(application.userId).catch(() => null);
+    const rankLabel = rank?.label ?? "Unknown Rank";
+    const { sheetRank, discordRoleIds } = await resolveAssignmentRoleIds(guild, rankValue);
 
-  if (member && guild) {
-    await member.roles.add(roleId, "Voice interview accepted").catch((error) => {
-      console.error("Failed to assign role:", error);
-    });
-  }
+    let roleSummary = "";
+    if (member && guild) {
+      const roleResult = await assignRankRolesToMember(member, rankValue, "Voice interview accepted");
+      if (roleResult.error) {
+        roleSummary = `\nDiscord roles: assignment failed (${roleResult.error}).`;
+      } else if (roleResult.added.length === 0) {
+        roleSummary = "\nDiscord roles: member already had the assigned rank roles.";
+      }
+    }
 
   let rosterSummary = "";
   let rosterResult = null;
@@ -1502,7 +1509,7 @@ async function handleInterviewRankSelect(interaction, appId) {
 
   application.status = "accepted";
   application.rankLabel = rankLabel;
-  application.rankId = roleId;
+  application.rankId = discordRoleIds[0] ?? rankValue;
   application.reviewerTag = interaction.user.tag;
   persistApplication(application);
 
@@ -1540,7 +1547,8 @@ async function handleInterviewRankSelect(interaction, appId) {
   }
 
   await interaction.editReply({
-    content: `Interview accepted. **${application.userTag}** was assigned **${application.rankLabel}**.${rosterSummary}`,
+    content:
+      `Interview accepted. **${application.userTag}** was assigned **${application.rankLabel}**.${roleSummary}${rosterSummary}`,
     components: [],
   });
 

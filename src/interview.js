@@ -442,6 +442,7 @@ function buildInterviewSessionPayload(
     actionRows = [],
     footer,
     forEdit = false,
+    ephemeral = false,
   } = {},
 ) {
   const builder = forEdit ? buildV2EditPayload : buildV2Payload;
@@ -454,7 +455,35 @@ function buildInterviewSessionPayload(
     footer,
     actionRows,
     allowedMentions: { users: [session.intervieweeId] },
+    ephemeral: forEdit ? false : ephemeral,
   });
+}
+
+function shouldUseEphemeralInterviewPanel(interaction, intervieweeId) {
+  return Boolean(
+    interaction &&
+      intervieweeId &&
+      interaction.user?.id === intervieweeId &&
+      (interaction.deferred || interaction.replied),
+  );
+}
+
+async function publishInterviewStatusMessage(
+  interaction,
+  textChannel,
+  session,
+  options,
+) {
+  const payload = buildInterviewSessionPayload(session, {
+    ...options,
+    ephemeral: shouldUseEphemeralInterviewPanel(interaction, session.intervieweeId),
+  });
+
+  if (shouldUseEphemeralInterviewPanel(interaction, session.intervieweeId)) {
+    return interaction.editReply(payload);
+  }
+
+  return textChannel.send(payload);
 }
 
 async function getInterviewStatusMessage(client, session) {
@@ -1314,7 +1343,7 @@ async function resolveInterviewee(message, hostMember) {
 
 async function startInterview(
   client,
-  { guild, textChannel, hostMember, interviewee, roleplayName, roleplayNameRaw },
+  { guild, textChannel, hostMember, interviewee, roleplayName, roleplayNameRaw, interaction },
 ) {
   if (getSession(guild.id)) {
     throw new Error("An interview is already running in this server.");
@@ -1333,11 +1362,14 @@ async function startInterview(
     roleplayName,
   };
 
-  const statusMessage = await textChannel.send(
-    buildInterviewSessionPayload(bootstrapSession, {
+  const statusMessage = await publishInterviewStatusMessage(
+    interaction,
+    textChannel,
+    bootstrapSession,
+    {
       description: `Creating a private interview voice channel for <@${interviewee.id}>…`,
       statusNote: "Please wait…",
-    }),
+    },
   );
 
   let interviewChannel;
@@ -2204,10 +2236,8 @@ async function handleInterviewRoleplayModal(interaction) {
       interviewee,
       roleplayName,
       roleplayNameRaw,
+      interaction,
     });
-    await interaction.editReply(
-      `Roster name **${roleplayName}** saved. Your voice interview is starting now.`,
-    );
   } catch (error) {
     console.error("[interview] Start after roleplay modal failed:", error);
     await interaction.editReply(error.message ?? "Could not start the interview.");

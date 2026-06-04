@@ -544,7 +544,7 @@ async function replyInterviewFailure(interaction, description, { session } = {})
 
 function formatAnswerPanelDescription(session) {
   return (
-    `<@${session.intervieweeId}> **Done talking?** Use the panel below when you're ready.\n\n` +
+    `<@${session.intervieweeId}> Answer the question in voice, then click **Continue** when you are done.\n\n` +
     "**Continue** — next question · **Add Note** — type extra info · **Repeat Question** · **Discontinue** — end early"
   );
 }
@@ -783,17 +783,16 @@ async function runQuestion(client, session) {
 
   if (session.cancelled) return;
 
-  const speechResult = await waitForInterviewAnswer(session);
   session.waitingForSpeech = false;
-  session.lastAnswerHadVoice = speechResult.spoke;
-
-  if (session.cancelled) return;
+  session.lastAnswerHadVoice = true;
 
   await postAnswerControlPanel(client, session);
 }
 
-async function waitForInterviewAnswer(session) {
-  let result = await waitForUserToFinishSpeaking(session.connection, session.intervieweeId);
+async function waitForInterviewAnswer(session, { timeoutMs = 90_000 } = {}) {
+  let result = await waitForUserToFinishSpeaking(session.connection, session.intervieweeId, {
+    timeoutMs,
+  });
 
   if (!result.spoke) {
     try {
@@ -803,7 +802,7 @@ async function waitForInterviewAnswer(session) {
     }
 
     result = await waitForUserToFinishSpeaking(session.connection, session.intervieweeId, {
-      timeoutMs: 90_000,
+      timeoutMs: Math.min(timeoutMs, 60_000),
     });
   }
 
@@ -1016,7 +1015,7 @@ async function runRetakeAnswer(client, application, questionIndex, retakeRequest
     const questionNumber = questionIndex + 1;
     const question = QUESTIONS[questionIndex];
     await speakText(voiceSessionState, `Question ${questionNumber}. ${question}`);
-    await waitForInterviewAnswer(voiceSessionState);
+    await waitForInterviewAnswer(voiceSessionState, { timeoutMs: 90_000 });
     recordingPath = await recorder.stop();
   } catch (error) {
     await recorder.stop().catch(() => null);
@@ -1476,7 +1475,7 @@ async function startInterview(
     connection: voiceSession.connection,
     player: voiceSession.player,
     recorder: new VoiceInterviewRecorder(voiceSession.connection, interviewee.id),
-    startedAt: null,
+    startedAt: Date.now(),
     notes: [],
     discontinuedEarly: false,
     discontinueReason: "",
@@ -2016,6 +2015,10 @@ async function handleInterviewContinue(interaction, guildId) {
 
   if (hasProcessed(`interview-continue:${interaction.id}`)) return true;
   markProcessed(`interview-continue:${interaction.id}`);
+
+  if (session.recorder) {
+    session.lastAnswerHadVoice = await session.recorder.flushAndMeasureUserAudio();
+  }
 
   await interaction.deferUpdate();
   await advanceInterviewAfterContinue(interaction.client, session, interaction);

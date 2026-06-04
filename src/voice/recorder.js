@@ -20,6 +20,7 @@ class VoiceInterviewRecorder {
     this.currentPcmPath = null;
     this.userCaptureActive = false;
     this.sessionStarted = false;
+    this.lastFlushedSegmentBytes = 0;
   }
 
   start() {
@@ -95,6 +96,7 @@ class VoiceInterviewRecorder {
     }
 
     const { size } = fs.statSync(pcmPath);
+    this.lastFlushedSegmentBytes = size;
     if (size < MIN_PCM_BYTES) {
       fs.unlink(pcmPath, () => {});
       return;
@@ -128,6 +130,15 @@ class VoiceInterviewRecorder {
     );
     fs.copyFileSync(sourceMp3Path, dest);
     this.segments.push(dest);
+  }
+
+  async flushAndMeasureUserAudio() {
+    await this.pauseUserCapture();
+    const hadVoice = this.lastFlushedSegmentBytes >= MIN_PCM_BYTES;
+    if (this.sessionStarted) {
+      this.startUserCapture();
+    }
+    return hadVoice;
   }
 
   async stop() {

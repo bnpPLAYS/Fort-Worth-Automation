@@ -75,7 +75,12 @@ function guildRoleIdsMatchingRank(guild, sheetRank) {
   if (!guild) return [];
 
   return guild.roles.cache
-    .filter((role) => role.id !== guild.id && ranksMatch(sheetRank, role.name))
+    .filter(
+      (role) =>
+        role.id !== guild.id &&
+        !MEMBER_ROSTER_ROLE_IDS.includes(role.id) &&
+        ranksMatch(sheetRank, role.name),
+    )
     .map((role) => role.id);
 }
 

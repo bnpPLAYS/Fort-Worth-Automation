@@ -11,7 +11,8 @@ const {
   TextInputStyle,
   UserSelectMenuBuilder,
 } = require("discord.js");
-const { buildPanelButton, BUTTON_CUSTOM_ID } = require("./quiz");
+const { buildPanelButton } = require("./quiz");
+const { promptInterviewRoleplayName, buildInterviewPanelButton } = require("./interview");
 const { getTicket, saveTicket, deleteTicket, resolveOpenTicket } = require("./tickets-store");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { closeTicket } = require("./transcripts");
@@ -29,6 +30,7 @@ const SUPPORT_PANEL_COMMAND = "-supportpanel";
 const CONTACT_BUTTON_ID = "support_contact";
 const TYPE_QUIZ_ID = "support_type_quiz";
 const LEGACY_TYPE_QUIZ_ID = "support_type_fastpass";
+const TYPE_INTERVIEW_ID = "support_type_interview";
 const TYPE_REPORT_ID = "support_type_report";
 const TYPE_OTHER_ID = "support_type_other";
 const REPORT_USER_SELECT_ID = "support_report_user";
@@ -157,6 +159,7 @@ function buildAssistanceHubContent() {
     "**Available options:**\n" +
     "• **Other** — General support tickets\n" +
     "• **Quiz** — Department quiz application\n" +
+    "• **Voice Interview** — Voice interview application\n" +
     "• **Report** — Report a member or officer\n" +
     "• **Supervisor Exam** — Supervisor promotion exam"
   );
@@ -185,24 +188,32 @@ function buildContactSupportButton() {
 }
 
 function buildSupportTypeButtons() {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(TYPE_QUIZ_ID)
-      .setLabel("Quiz")
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId(TYPE_REPORT_ID)
-      .setLabel("Report")
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId(TYPE_OTHER_ID)
-      .setLabel("Other")
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId(TYPE_SUPERVISOR_EXAM_ID)
-      .setLabel("Supervisor Exam")
-      .setStyle(ButtonStyle.Secondary),
-  );
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(TYPE_QUIZ_ID)
+        .setLabel("Quiz")
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(TYPE_INTERVIEW_ID)
+        .setLabel("Voice Interview")
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(TYPE_REPORT_ID)
+        .setLabel("Report")
+        .setStyle(ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(TYPE_OTHER_ID)
+        .setLabel("Other")
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(TYPE_SUPERVISOR_EXAM_ID)
+        .setLabel("Supervisor Exam")
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  ];
 }
 
 function buildReportUserSelect() {
@@ -384,7 +395,7 @@ async function handleSupportInteraction(interaction) {
   if (interaction.isButton() && interaction.customId === CONTACT_BUTTON_ID) {
     await interaction.reply({
       content: "Select the type of support you need:",
-      components: [buildSupportTypeButtons()],
+      components: buildSupportTypeButtons(),
       ephemeral: true,
     });
     return true;
@@ -400,6 +411,45 @@ async function handleSupportInteraction(interaction) {
       embeds: [],
       components: [buildPanelButton()],
     });
+    return true;
+  }
+
+  if (interaction.isButton() && interaction.customId === TYPE_INTERVIEW_ID) {
+    if (!interaction.guild) {
+      await interaction.update({
+        content: "Voice interviews can only be started in a server.",
+        embeds: [],
+        components: [],
+      });
+      return true;
+    }
+
+    const member = interaction.member;
+    if (!member) {
+      await interaction.update({
+        content: "Could not resolve your server membership.",
+        embeds: [],
+        components: [],
+      });
+      return true;
+    }
+
+    try {
+      await promptInterviewRoleplayName(interaction.client, {
+        guild: interaction.guild,
+        textChannel: interaction.channel,
+        hostMember: member,
+        interviewee: member,
+        interaction,
+      });
+    } catch (error) {
+      await interaction.update({
+        content: error.message ?? "Could not start the voice interview.",
+        embeds: [],
+        components: [buildInterviewPanelButton()],
+      }).catch(() => null);
+    }
+
     return true;
   }
 

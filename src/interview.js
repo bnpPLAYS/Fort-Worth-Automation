@@ -192,6 +192,15 @@ function buildInterviewStartButton(guildId, intervieweeId) {
   );
 }
 
+function buildInterviewPanelButton() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(INTERVIEW_DASHBOARD_BUTTON_ID)
+      .setLabel("Voice Interview")
+      .setStyle(ButtonStyle.Primary),
+  );
+}
+
 function buildRoleplayPromptDescription(interviewee, hostMember) {
   const selfServe = hostMember.id === interviewee.id;
   const intro = selfServe
@@ -2254,6 +2263,9 @@ function registerInterviewVoiceHandlers(client) {
 module.exports = {
   INTERVIEW_COMMAND,
   INTERVIEW_DASHBOARD_BUTTON_ID,
+  INTERVIEW_QUEUE_VOICE_URL,
+  buildInterviewPanelButton,
+  promptInterviewRoleplayName,
   buildInterviewCommand,
   handleInterviewCommand,
   handleInterviewSlashCommand,

@@ -17,7 +17,7 @@ const {
 const DASHBOARD_COMMAND = "-hpddashboard";
 const CADET_ENROLL_BUTTON_ID = "cadet_enroll";
 const { BUTTON_CUSTOM_ID } = require("./quiz");
-const { INTERVIEW_DASHBOARD_BUTTON_ID } = require("./interview");
+const { INTERVIEW_DASHBOARD_BUTTON_ID, INTERVIEW_QUEUE_VOICE_URL } = require("./interview");
 
 function buildDashboardContent() {
   return (
@@ -26,8 +26,10 @@ function buildDashboardContent() {
     "> Welcome to the **Houston Police Department!** In this dashboard you will be able to find all important information regarding the Houston Police Department.\n\n" +
     "`Frequently Asked Questions`\n\n" +
     "1. *Is there an application?* Use **Become a Cadet**, **Quiz**, or **Voice Interview** below to apply.\n" +
-    "2. *Where do I report an Officer?* You can report an officer by opening an **Internal Affairs** ticket through **Contact Support → Report**.\n" +
-    "3. *What are your callsigns for unranked?* If you are unranked, your callsign is between the numbers of **400–500**."
+    "2. *Voice interview?* Join the waiting voice channel first: " +
+    `${INTERVIEW_QUEUE_VOICE_URL} — then click **Voice Interview**.\n` +
+    "3. *Where do I report an Officer?* Open **Contact Support → Report** on the Assistance Hub.\n" +
+    "4. *What are your callsigns for unranked?* If you are unranked, your callsign is between the numbers of **400–500**."
   );
 }
 

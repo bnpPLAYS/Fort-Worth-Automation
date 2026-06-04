@@ -3,6 +3,7 @@ const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 const { EndBehaviorType } = require("@discordjs/voice");
+const prism = require("prism-media");
 const ffmpegPath = require("ffmpeg-static");
 
 class VoiceInterviewRecorder {
@@ -15,6 +16,7 @@ class VoiceInterviewRecorder {
     );
     this.mp3Path = this.pcmPath.replace(/\.pcm$/, ".mp3");
     this.subscription = null;
+    this.decoder = null;
     this.fileStream = null;
     this.started = false;
   }
@@ -24,15 +26,20 @@ class VoiceInterviewRecorder {
     this.started = true;
 
     this.fileStream = fs.createWriteStream(this.pcmPath);
+    this.decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
     this.subscription = this.connection.receiver.subscribe(this.userId, {
       end: { behavior: EndBehaviorType.Manual },
     });
 
     this.subscription.on("error", (error) => {
-      console.warn("[interview-recorder] stream error:", error.message);
+      console.warn("[interview-recorder] subscription error:", error.message);
+    });
+    this.decoder.on("error", (error) => {
+      console.warn("[interview-recorder] decoder error:", error.message);
     });
 
-    this.subscription.pipe(this.fileStream);
+    this.subscription.pipe(this.decoder);
+    this.decoder.pipe(this.fileStream);
   }
 
   async stop() {
@@ -41,17 +48,24 @@ class VoiceInterviewRecorder {
       this.subscription = null;
     }
 
+    if (this.decoder) {
+      this.decoder.destroy();
+      this.decoder = null;
+    }
+
     if (this.fileStream) {
       await new Promise((resolve) => this.fileStream.end(resolve));
       this.fileStream = null;
     }
 
     if (!fs.existsSync(this.pcmPath)) {
+      console.warn("[interview-recorder] No PCM file written.");
       return null;
     }
 
     const { size } = fs.statSync(this.pcmPath);
     if (size < 500) {
+      console.warn(`[interview-recorder] PCM file too small (${size} bytes).`);
       fs.unlink(this.pcmPath, () => {});
       return null;
     }

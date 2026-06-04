@@ -49,6 +49,9 @@ const MODAL_NOTE_PREFIX = "interview_note_modal:";
 const MODAL_DISCONTINUE_PREFIX = "interview_discontinue_modal:";
 const ACCEPT_PREFIX = "voice_interview_accept:";
 const DENY_PREFIX = "voice_interview_deny:";
+const ASK_AGAIN_PREFIX = "voice_interview_ask_again:";
+const ASK_AGAIN_SELECT_PREFIX = "voice_interview_ask_again_select:";
+const RETAKE_READY_PREFIX = "voice_interview_retake_ready:";
 const RANK_SELECT_PREFIX = "voice_interview_rank:";
 const MODAL_DENY_PREFIX = "voice_interview_deny_modal:";
 
@@ -77,6 +80,7 @@ const RANKS = RANK_OPTIONS.filter((rank) => !rank.useCadetCallsign).map((rank) =
 
 const sessions = new Map();
 const applications = new Map();
+const retakeInProgress = new Set();
 
 function getSubmissionsChannelId() {
   return process.env.INTERVIEW_SUBMISSIONS_CHANNEL_ID || DEFAULT_SUBMISSIONS_CHANNEL_ID;
@@ -164,32 +168,95 @@ function buildAnswerControlRows(guildId) {
   ];
 }
 
-function formatAnswerPanelContent(session) {
+function buildInterviewSessionFields(session, { statusNote, micWarning = false } = {}) {
   const questionNumber = session.questionIndex + 1;
-  let content =
-    `<@${session.intervieweeId}> **Done talking?**\n` +
-    `Question **${questionNumber}** of **${QUESTIONS.length}** — use the panel when you're ready.\n\n` +
-    "**Continue** — next question · **Add Note** — type extra info · **Repeat Question** · **Discontinue** — end early";
+  const fields = [
+    { name: "Applicant", value: `<@${session.intervieweeId}>` },
+    {
+      name: "Voice Channel",
+      value: session.voiceChannelName ? `#${session.voiceChannelName}` : "Setting up…",
+    },
+  ];
 
-  if (session.notes?.length > 0) {
-    content += `\n\n📝 **${session.notes.length}** note(s) added this interview.`;
+  if (session.startedAt || session.questionIndex > 0 || session.waitingForContinue) {
+    fields.push({
+      name: "Progress",
+      value:
+        session.questionIndex >= QUESTIONS.length
+          ? "All questions answered"
+          : `Question **${questionNumber}** of **${QUESTIONS.length}**`,
+    });
   }
 
-  return content;
+  if (statusNote) {
+    fields.push({ name: "Status", value: statusNote });
+  }
+
+  if (micWarning) {
+    fields.push({
+      name: "Microphone",
+      value:
+        "We could not detect your voice. Move closer to your microphone or use **Add Note** if needed.",
+    });
+  }
+
+  if (session.notes?.length > 0) {
+    fields.push({
+      name: "Notes",
+      value: `${session.notes.length} note(s) added this interview.`,
+    });
+  }
+
+  return fields;
 }
 
-async function refreshAnswerPanelMessage(client, session) {
-  if (!session.continueMessageId) return;
+function buildInterviewSessionPayload(
+  session,
+  {
+    title = "Voice Interview",
+    description,
+    statusNote,
+    micWarning = false,
+    actionRows = [],
+    footer,
+    forEdit = false,
+  } = {},
+) {
+  const builder = forEdit ? buildV2EditPayload : buildV2Payload;
 
-  const textChannel = await client.channels.fetch(session.textChannelId).catch(() => null);
-  const message = await textChannel?.messages.fetch(session.continueMessageId).catch(() => null);
-  if (!message) return;
-
-  await message.edit({
-    content: formatAnswerPanelContent(session),
-    components: buildAnswerControlRows(session.guildId),
+  return builder({
+    withTicketBanner: true,
+    title,
+    description,
+    fields: buildInterviewSessionFields(session, { statusNote, micWarning }),
+    footer,
+    actionRows,
     allowedMentions: { users: [session.intervieweeId] },
   });
+}
+
+async function getInterviewStatusMessage(client, session) {
+  if (!session?.statusMessageId) return null;
+
+  const textChannel = await client.channels.fetch(session.textChannelId).catch(() => null);
+  if (!textChannel?.isTextBased()) return null;
+
+  return textChannel.messages.fetch(session.statusMessageId).catch(() => null);
+}
+
+async function updateInterviewStatusMessage(client, session, options = {}) {
+  const message = await getInterviewStatusMessage(client, session);
+  if (!message) return null;
+
+  await message.edit(buildInterviewSessionPayload(session, { ...options, forEdit: true }));
+  return message;
+}
+
+function formatAnswerPanelDescription(session) {
+  return (
+    `<@${session.intervieweeId}> **Done talking?** Use the panel below when you're ready.\n\n` +
+    "**Continue** — next question · **Add Note** — type extra info · **Repeat Question** · **Discontinue** — end early"
+  );
 }
 
 function buildReviewButtons(appId) {
@@ -202,7 +269,44 @@ function buildReviewButtons(appId) {
       .setCustomId(`${DENY_PREFIX}${appId}`)
       .setLabel("Deny")
       .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId(`${ASK_AGAIN_PREFIX}${appId}`)
+      .setLabel("Ask Again")
+      .setStyle(ButtonStyle.Secondary),
   );
+}
+
+function buildAskAgainSelect(appId) {
+  return new StringSelectMenuBuilder()
+    .setCustomId(`${ASK_AGAIN_SELECT_PREFIX}${appId}`)
+    .setPlaceholder("Select a question to re-ask")
+    .addOptions(
+      QUESTIONS.map((question, index) => ({
+        label: `Question ${index + 1}`,
+        description: question.slice(0, 100),
+        value: String(index),
+      })),
+    );
+}
+
+function buildRetakeReadyButton(appId, questionIndex) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${RETAKE_READY_PREFIX}${appId}:${questionIndex}`)
+      .setLabel("Ready to Re-Answer")
+      .setStyle(ButtonStyle.Primary),
+  );
+}
+
+function formatRetakeRequests(application) {
+  if (!application.retakeRequests?.length) return "";
+
+  return application.retakeRequests
+    .map((entry) => {
+      const status = entry.status === "completed" ? "Completed" : "Pending";
+      return `**${status}** — Q${entry.questionIndex + 1} (requested by ${entry.requestedByTag})`;
+    })
+    .join("\n");
 }
 
 function buildRankSelect(appId) {
@@ -233,8 +337,9 @@ function buildSubmissionPayload(application, { actionRows = [], forEdit = false 
     voiceChannelName,
     hasRecording,
     notes,
-    discontinuedEarly,
+    discontinueEarly,
     discontinueReason,
+    retakeRequests,
   } = application;
 
   const title =
@@ -291,6 +396,11 @@ function buildSubmissionPayload(application, { actionRows = [], forEdit = false 
     });
   }
 
+  const retakeSummary = formatRetakeRequests(application);
+  if (retakeSummary) {
+    fields.push({ name: "Re-Answer Requests", value: truncateField(retakeSummary) });
+  }
+
   if (status === "accepted" && rankLabel) {
     fields.push({ name: "Assigned Rank", value: rankLabel });
   }
@@ -331,18 +441,14 @@ async function speakText(session, text) {
 }
 
 async function postAnswerControlPanel(client, session) {
-  const textChannel = await client.channels.fetch(session.textChannelId).catch(() => null);
-  if (!textChannel?.isTextBased()) return;
-
   session.waitingForContinue = true;
 
-  const message = await textChannel.send({
-    content: formatAnswerPanelContent(session),
-    components: buildAnswerControlRows(session.guildId),
-    allowedMentions: { users: [session.intervieweeId] },
+  await updateInterviewStatusMessage(client, session, {
+    description: formatAnswerPanelDescription(session),
+    statusNote: `**Question ${session.questionIndex + 1}:** ${QUESTIONS[session.questionIndex]}`,
+    micWarning: session.lastAnswerHadVoice === false,
+    actionRows: buildAnswerControlRows(session.guildId),
   });
-
-  session.continueMessageId = message.id;
 }
 
 async function runQuestion(client, session) {
@@ -354,6 +460,12 @@ async function runQuestion(client, session) {
 
   session.waitingForContinue = false;
   session.waitingForSpeech = true;
+
+  await updateInterviewStatusMessage(client, session, {
+    description: `<@${session.intervieweeId}> Listen in voice and answer clearly.`,
+    statusNote: `**Question ${questionNumber}:** ${question}`,
+    actionRows: [],
+  }).catch(() => null);
 
   try {
     await speakText(session, spoken);
@@ -369,19 +481,9 @@ async function runQuestion(client, session) {
 
   const speechResult = await waitForInterviewAnswer(session);
   session.waitingForSpeech = false;
+  session.lastAnswerHadVoice = speechResult.spoke;
 
   if (session.cancelled) return;
-
-  if (!speechResult.spoke) {
-    const textChannel = await client.channels.fetch(session.textChannelId).catch(() => null);
-    if (textChannel?.isTextBased()) {
-      await textChannel
-        .send(
-          `<@${session.intervieweeId}> We could not detect your voice. Move closer to your microphone or use **Add Note** on the panel if needed.`,
-        )
-        .catch(() => null);
-    }
-  }
 
   await postAnswerControlPanel(client, session);
 }
@@ -453,6 +555,17 @@ async function submitInterviewApplication(client, session, recordingPath) {
     application.messageId = submissionMessage.id;
     application.channelId = submissionsChannel.id;
     persistApplication(application);
+
+    if (recordingPath && submissionMessage.attachments.size === 0) {
+      console.warn("[interview] Recording was not attached to submission message; sending follow-up.");
+      const followUp = await submissionsChannel.send({
+        content: `<@${application.userId}> Voice interview recording`,
+        files,
+        reply: { messageReference: submissionMessage.id, failIfNotExists: false },
+      });
+      application.recordingMessageId = followUp.id;
+      persistApplication(application);
+    }
   } catch (error) {
     if (files.length > 0 && /413|file/i.test(error.message ?? "")) {
       const submissionMessage = await submissionsChannel.send({
@@ -474,6 +587,375 @@ async function submitInterviewApplication(client, session, recordingPath) {
   }
 
   return application;
+}
+
+function buildRetakeSubmissionPayload(application, questionIndex, retakeRequest, { forEdit = false } = {}) {
+  const question = QUESTIONS[questionIndex];
+  const builder = forEdit ? buildV2EditPayload : buildV2Payload;
+
+  return builder({
+    withTicketBanner: true,
+    title: "Voice Interview — Re-Answer Submitted",
+    description:
+      `<@&${STAFF_PING_ROLE_ID}>\n\n` +
+      `Re-answer from <@${application.userId}> (\`${application.userTag}\`)`,
+    fields: [
+      { name: "Question", value: truncateField(`**${questionIndex + 1}.** ${question}`) },
+      { name: "Requested By", value: retakeRequest.requestedByTag ?? "Staff" },
+      {
+        name: "Recording",
+        value: retakeRequest.hasRecording
+          ? "Attached below."
+          : "No audio captured for this re-answer.",
+      },
+    ],
+    actionRows: application.status === "pending" ? [buildReviewButtons(application.appId)] : [],
+    allowedMentions: { roles: [STAFF_PING_ROLE_ID] },
+  });
+}
+
+async function submitRetakeRecording(client, application, questionIndex, recordingPath, retakeRequest) {
+  const channel = await client.channels.fetch(application.channelId).catch(() => null);
+  if (!channel?.isTextBased()) {
+    throw new Error("The interview submissions channel could not be found.");
+  }
+
+  retakeRequest.hasRecording = Boolean(recordingPath);
+  retakeRequest.status = "completed";
+  retakeRequest.completedAt = Date.now();
+  persistApplication(application);
+
+  const files = [];
+  if (recordingPath) {
+    files.push(
+      new AttachmentBuilder(recordingPath, {
+        name: `voice-interview-retake-q${questionIndex + 1}-${application.userTag.replace(/[^a-z0-9-_]/gi, "-")}.mp3`,
+      }),
+    );
+  }
+
+  const submissionMessage = await channel.send({
+    ...buildRetakeSubmissionPayload(application, questionIndex, retakeRequest),
+    files,
+    reply: { messageReference: application.messageId, failIfNotExists: false },
+  });
+
+  retakeRequest.retakeMessageId = submissionMessage.id;
+  persistApplication(application);
+
+  if (recordingPath && submissionMessage.attachments.size === 0 && files.length > 0) {
+    const followUp = await channel.send({
+      content: `Re-answer recording for question ${questionIndex + 1}`,
+      files,
+      reply: { messageReference: submissionMessage.id, failIfNotExists: false },
+    });
+    retakeRequest.recordingMessageId = followUp.id;
+    persistApplication(application);
+  }
+
+  if (recordingPath) {
+    deleteTempFile(recordingPath);
+  }
+
+  const originalChannel = await client.channels.fetch(application.channelId).catch(() => null);
+  const originalMessage = await originalChannel?.messages
+    .fetch(application.messageId)
+    .catch(() => null);
+  if (originalMessage) {
+    await originalMessage.edit(
+      buildSubmissionPayload(application, {
+        forEdit: true,
+        actionRows: application.status === "pending" ? [buildReviewButtons(application.appId)] : [],
+      }),
+    );
+  }
+
+  return submissionMessage;
+}
+
+async function runRetakeAnswer(client, application, questionIndex, retakeRequest) {
+  const guild = await client.guilds.fetch(application.guildId).catch(() => null);
+  if (!guild) {
+    throw new Error("Could not find the server for this interview.");
+  }
+
+  const member = await guild.members.fetch(application.userId).catch(() => null);
+  if (!member) {
+    throw new Error("You must still be in the server to re-answer this question.");
+  }
+
+  if (getSession(guild.id)) {
+    throw new Error("An interview is already running in this server. Try again when it finishes.");
+  }
+
+  let interviewChannel;
+  try {
+    interviewChannel = await createInterviewVoiceChannel(guild, member);
+    await moveMemberToInterviewChannel(member, interviewChannel);
+  } catch (error) {
+    if (interviewChannel) {
+      await deleteInterviewVoiceChannel(guild, interviewChannel.id);
+    }
+    throw error;
+  }
+
+  let voiceSession;
+  try {
+    voiceSession = await joinVoiceChannelById(guild, interviewChannel.id);
+  } catch (error) {
+    await deleteInterviewVoiceChannel(guild, interviewChannel.id);
+    throw error;
+  }
+
+  const voiceSessionState = {
+    connection: voiceSession.connection,
+    player: voiceSession.player,
+    intervieweeId: member.id,
+  };
+
+  const recorder = new VoiceInterviewRecorder(voiceSession.connection, member.id);
+  let recordingPath = null;
+
+  try {
+    recorder.start();
+    const questionNumber = questionIndex + 1;
+    const question = QUESTIONS[questionIndex];
+    await speakText(voiceSessionState, `Question ${questionNumber}. ${question}`);
+    await waitForInterviewAnswer(voiceSessionState);
+    recordingPath = await recorder.stop();
+  } catch (error) {
+    await recorder.stop().catch(() => null);
+    throw error;
+  } finally {
+    await destroyVoiceSession(voiceSession.connection, voiceSession.player);
+    await deleteInterviewVoiceChannel(guild, interviewChannel.id);
+  }
+
+  await submitRetakeRecording(client, application, questionIndex, recordingPath, retakeRequest);
+}
+
+async function refreshInterviewSubmissionMessage(client, application) {
+  const channel = await client.channels.fetch(application.channelId).catch(() => null);
+  const message = await channel?.messages.fetch(application.messageId).catch(() => null);
+  if (!message) return;
+
+  await message.edit(
+    buildSubmissionPayload(application, {
+      forEdit: true,
+      actionRows: application.status === "pending" ? [buildReviewButtons(application.appId)] : [],
+    }),
+  );
+}
+
+async function handleInterviewAskAgain(interaction, appId) {
+  const application = getApplication(appId);
+
+  if (!application || application.status !== "pending") {
+    await interaction.reply({ content: "This interview submission is no longer pending.", ephemeral: true });
+    return true;
+  }
+
+  if (!canReviewInterview(interaction.member)) {
+    await interaction.reply({
+      content: "You need **Manage Roles** or **Manage Server** to request a re-answer.",
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  await interaction.reply({
+    ...buildV2Payload({
+      title: "Ask Again",
+      description: "Select which question the applicant should re-answer in voice.",
+      actionRows: [new ActionRowBuilder().addComponents(buildAskAgainSelect(appId))],
+      ephemeral: true,
+      includeFiles: false,
+    }),
+  });
+
+  return true;
+}
+
+async function handleInterviewAskAgainSelect(interaction, appId) {
+  const application = getApplication(appId);
+
+  if (!application || application.status !== "pending") {
+    await interaction.reply({ content: "This interview submission is no longer pending.", ephemeral: true });
+    return true;
+  }
+
+  if (!canReviewInterview(interaction.member)) {
+    await interaction.reply({
+      content: "You need **Manage Roles** or **Manage Server** to request a re-answer.",
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  const questionIndex = Number.parseInt(interaction.values[0], 10);
+  if (!Number.isFinite(questionIndex) || questionIndex < 0 || questionIndex >= QUESTIONS.length) {
+    await interaction.reply({ content: "Invalid question selected.", ephemeral: true });
+    return true;
+  }
+
+  if (!application.retakeRequests) application.retakeRequests = [];
+
+  const existingPending = application.retakeRequests.find(
+    (entry) => entry.questionIndex === questionIndex && entry.status === "pending",
+  );
+  if (existingPending) {
+    await interaction.update({
+      ...buildV2EditPayload({
+        title: "Ask Again",
+        description: `Question **${questionIndex + 1}** already has a pending re-answer request.`,
+        includeFiles: false,
+      }),
+      components: [],
+    });
+    return true;
+  }
+
+  const retakeRequest = {
+    questionIndex,
+    requestedById: interaction.user.id,
+    requestedByTag: interaction.user.tag,
+    requestedAt: Date.now(),
+    status: "pending",
+  };
+
+  application.retakeRequests.push(retakeRequest);
+  persistApplication(application);
+
+  const applicant = await interaction.client.users.fetch(application.userId).catch(() => null);
+  const question = QUESTIONS[questionIndex];
+
+  if (applicant) {
+    await applicant
+      .send(
+        buildV2Payload({
+          withTicketBanner: true,
+          title: "Voice Interview — Re-Answer Required",
+          description:
+            `Staff requested that you re-answer **Question ${questionIndex + 1}** in voice:\n\n` +
+            `> ${question}\n\n` +
+            `When you're ready, click **Ready to Re-Answer** below. We'll move you to a private voice channel, repeat the question, and send your new answer to staff.`,
+          actionRows: [buildRetakeReadyButton(appId, questionIndex)],
+        }),
+      )
+      .catch(() => null);
+  }
+
+  await refreshInterviewSubmissionMessage(interaction.client, application);
+
+  await interaction.update({
+    ...buildV2EditPayload({
+      title: "Ask Again",
+      description:
+        `Requested a re-answer for **Question ${questionIndex + 1}**.\n` +
+        (applicant
+          ? `<@${application.userId}> was DMed with a **Ready to Re-Answer** button.`
+          : `Could not DM <@${application.userId}> — ask them to enable DMs and click **Ready to Re-Answer** when sent.`),
+      includeFiles: false,
+    }),
+    components: [],
+  });
+
+  return true;
+}
+
+async function handleInterviewRetakeReady(interaction) {
+  const payload = interaction.customId.slice(RETAKE_READY_PREFIX.length);
+  const separatorIndex = payload.lastIndexOf(":");
+  if (separatorIndex <= 0) return false;
+
+  const appId = payload.slice(0, separatorIndex);
+  const questionIndex = Number.parseInt(payload.slice(separatorIndex + 1), 10);
+
+  if (!Number.isFinite(questionIndex)) {
+    await interaction.reply({ content: "Invalid re-answer request.", ephemeral: true });
+    return true;
+  }
+
+  const application = getApplication(appId);
+  if (!application || application.status !== "pending") {
+    await interaction.reply({ content: "This interview submission is no longer pending.", ephemeral: true });
+    return true;
+  }
+
+  if (interaction.user.id !== application.userId) {
+    await interaction.reply({ content: "This re-answer request is not for you.", ephemeral: true });
+    return true;
+  }
+
+  const retakeRequest = application.retakeRequests?.find(
+    (entry) => entry.questionIndex === questionIndex && entry.status === "pending",
+  );
+  if (!retakeRequest) {
+    await interaction.reply({ content: "This re-answer request is no longer active.", ephemeral: true });
+    return true;
+  }
+
+  if (retakeInProgress.has(interaction.user.id)) {
+    await interaction.reply({
+      content: "You're already completing a re-answer. Finish that first.",
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  if (hasProcessed(`interview-retake:${interaction.id}`)) return true;
+  markProcessed(`interview-retake:${interaction.id}`);
+
+  await interaction.deferUpdate();
+
+  retakeInProgress.add(interaction.user.id);
+
+  try {
+    await interaction.message
+      .edit(
+        buildV2EditPayload({
+          withTicketBanner: true,
+          title: "Voice Interview — Re-Answer In Progress",
+          description:
+            `Re-answering **Question ${questionIndex + 1}** now.\n\n` +
+            `Join the private voice channel when prompted and answer clearly.`,
+          includeFiles: false,
+        }),
+      )
+      .catch(() => null);
+
+    await runRetakeAnswer(interaction.client, application, questionIndex, retakeRequest);
+
+    await interaction.message
+      .edit(
+        buildV2EditPayload({
+          withTicketBanner: true,
+          title: "Voice Interview — Re-Answer Submitted",
+          description:
+            `Your re-answer for **Question ${questionIndex + 1}** was submitted to staff.\n\n` +
+            `You will be notified when your interview is reviewed.`,
+          includeFiles: false,
+        }),
+      )
+      .catch(() => null);
+  } catch (error) {
+    console.error("[interview] Retake failed:", error);
+    await interaction.message
+      .edit(
+        buildV2EditPayload({
+          withTicketBanner: true,
+          title: "Voice Interview — Re-Answer Failed",
+          description: `${error.message ?? "Could not complete the re-answer."}\n\nClick **Ready to Re-Answer** to try again.`,
+          actionRows: [buildRetakeReadyButton(appId, questionIndex)],
+          includeFiles: false,
+        }),
+      )
+      .catch(() => null);
+  } finally {
+    retakeInProgress.delete(interaction.user.id);
+  }
+
+  return true;
 }
 
 async function finishInterview(client, session) {
@@ -501,21 +983,23 @@ async function finishInterview(client, session) {
     await applicant.send({ content: closingLine }).catch(() => null);
   }
 
-  const textChannel = await client.channels.fetch(session.textChannelId).catch(() => null);
-  if (textChannel?.isTextBased()) {
-    await textChannel.send(`<@${session.intervieweeId}> ${closingLine}`);
-  }
+  let submissionFailed = false;
 
   try {
     await submitInterviewApplication(client, session, recordingPath);
   } catch (error) {
     console.error("[interview] Submission failed:", error);
-    if (textChannel?.isTextBased()) {
-      await textChannel.send(
-        `<@${session.intervieweeId}> Your interview was recorded, but staff could not be notified automatically. Contact an administrator.`,
-      );
-    }
+    submissionFailed = true;
   }
+
+  await updateInterviewStatusMessage(client, session, {
+    title: submissionFailed ? "Voice Interview — Submission Issue" : "Voice Interview — Submitted",
+    description: `<@${session.intervieweeId}> ${closingLine}`,
+    statusNote: submissionFailed
+      ? "Your interview was recorded, but staff could not be notified automatically. Contact an administrator."
+      : "Staff will review your recording shortly.",
+    actionRows: [],
+  }).catch(() => null);
 
   await endInterview(client, session.guildId, { silent: true });
 }
@@ -538,18 +1022,15 @@ async function endInterview(client, guildId, { reason, silent = false } = {}) {
     await deleteInterviewVoiceChannel(guild, session.voiceChannelId);
   }
 
-  if (!silent && reason) {
-    const textChannel = await client.channels.fetch(session.textChannelId).catch(() => null);
-    if (textChannel?.isTextBased()) {
-      await textChannel.send(reason).catch(() => null);
-    }
-  }
-
-  if (session.continueMessageId) {
-    const textChannel = await client.channels.fetch(session.textChannelId).catch(() => null);
-    const message = await textChannel?.messages.fetch(session.continueMessageId).catch(() => null);
-    if (message) {
-      await message.edit({ components: [] }).catch(() => null);
+  if (session.statusMessageId) {
+    if (!silent && reason) {
+      await updateInterviewStatusMessage(client, session, {
+        title: "Voice Interview — Ended",
+        description: reason,
+        actionRows: [],
+      }).catch(() => null);
+    } else if (!silent) {
+      await updateInterviewStatusMessage(client, session, { actionRows: [] }).catch(() => null);
     }
   }
 }
@@ -600,8 +1081,17 @@ async function startInterview(client, { guild, textChannel, hostMember, intervie
     throw new Error("An interview is already running in this server.");
   }
 
+  const bootstrapSession = {
+    intervieweeId: interviewee.id,
+    questionIndex: 0,
+    notes: [],
+  };
+
   const statusMessage = await textChannel.send(
-    `Creating a private interview voice channel for <@${interviewee.id}>…`,
+    buildInterviewSessionPayload(bootstrapSession, {
+      description: `Creating a private interview voice channel for <@${interviewee.id}>…`,
+      statusNote: "Please wait…",
+    }),
   );
 
   let interviewChannel;
@@ -612,6 +1102,16 @@ async function startInterview(client, { guild, textChannel, hostMember, intervie
     if (interviewChannel) {
       await deleteInterviewVoiceChannel(guild, interviewChannel.id);
     }
+    await statusMessage
+      .edit(
+        buildInterviewSessionPayload(bootstrapSession, {
+          title: "Voice Interview — Failed",
+          description: error.message ?? "Could not create the interview voice channel.",
+          statusNote: "Try again or contact staff.",
+          forEdit: true,
+        }),
+      )
+      .catch(() => null);
     throw error;
   }
 
@@ -620,12 +1120,26 @@ async function startInterview(client, { guild, textChannel, hostMember, intervie
     voiceSession = await joinVoiceChannelById(guild, interviewChannel.id);
   } catch (error) {
     await deleteInterviewVoiceChannel(guild, interviewChannel.id);
+    await statusMessage
+      .edit(
+        buildInterviewSessionPayload(
+          { ...bootstrapSession, voiceChannelName: interviewChannel.name },
+          {
+            title: "Voice Interview — Failed",
+            description: error.message ?? "Could not join the interview voice channel.",
+            statusNote: "Try again or contact staff.",
+            forEdit: true,
+          },
+        ),
+      )
+      .catch(() => null);
     throw new Error(error.message ?? "Could not join the interview voice channel.");
   }
 
   const session = {
     guildId: guild.id,
     textChannelId: textChannel.id,
+    statusMessageId: statusMessage.id,
     voiceChannelId: interviewChannel.id,
     voiceChannelName: interviewChannel.name,
     createdInterviewChannel: true,
@@ -635,10 +1149,10 @@ async function startInterview(client, { guild, textChannel, hostMember, intervie
     waitingForSpeech: false,
     waitingForContinue: false,
     cancelled: false,
+    lastAnswerHadVoice: true,
     connection: voiceSession.connection,
     player: voiceSession.player,
     recorder: new VoiceInterviewRecorder(voiceSession.connection, interviewee.id),
-    continueMessageId: null,
     startedAt: null,
     notes: [],
     discontinuedEarly: false,
@@ -647,11 +1161,13 @@ async function startInterview(client, { guild, textChannel, hostMember, intervie
 
   sessions.set(guild.id, session);
 
-  await statusMessage.edit(
-    `Voice interview started for <@${interviewee.id}> in ${interviewChannel}.\n` +
-      `Only <@${interviewee.id}> can join that channel. This session **is being recorded**.\n` +
-      `Answer each question in voice, then use the control panel in this channel.`,
-  );
+  await updateInterviewStatusMessage(client, session, {
+    description:
+      `<@${session.intervieweeId}> Your voice interview is in progress in ${interviewChannel}.\n\n` +
+      `Only you can join that channel. This session **is being recorded**.\n` +
+      `Answer each question in voice, then use the panel on this message when you're ready.`,
+    statusNote: "Starting interview…",
+  });
 
   runInterviewLoop(client, session);
 }
@@ -980,7 +1496,7 @@ async function handleInterviewSlashCommand(interaction) {
     });
 
     await interaction.deleteReply().catch(async () => {
-      await interaction.editReply("Interview started — check the messages above.");
+      await interaction.editReply("Interview started — check the message above.");
     });
   } catch (error) {
     console.error("[interview] Slash start failed:", error);
@@ -991,15 +1507,34 @@ async function handleInterviewSlashCommand(interaction) {
 }
 
 async function advanceInterviewAfterContinue(client, session, interaction) {
-  await interaction.message.edit({ components: [] }).catch(() => null);
-
   session.questionIndex += 1;
   session.waitingForContinue = false;
 
   if (session.questionIndex >= QUESTIONS.length) {
+    await interaction.message
+      .edit(
+        buildInterviewSessionPayload(session, {
+          description: `<@${session.intervieweeId}> Wrapping up your interview…`,
+          statusNote: "Submitting your recording to staff.",
+          actionRows: [],
+          forEdit: true,
+        }),
+      )
+      .catch(() => null);
     await finishInterview(client, session);
     return;
   }
+
+  await interaction.message
+    .edit(
+      buildInterviewSessionPayload(session, {
+        description: `<@${session.intervieweeId}> Moving to the next question…`,
+        statusNote: "Listen in voice for the next question.",
+        actionRows: [],
+        forEdit: true,
+      }),
+    )
+    .catch(() => null);
 
   runQuestion(client, session).catch(async (error) => {
     console.error("[interview] Question loop failed:", error);
@@ -1097,7 +1632,12 @@ async function handleInterviewNoteModal(interaction, guildId) {
   });
 
   await interaction.reply({ content: "Note saved. You can keep going or click **Continue**.", ephemeral: true });
-  await refreshAnswerPanelMessage(interaction.client, session);
+  await updateInterviewStatusMessage(interaction.client, session, {
+    description: formatAnswerPanelDescription(session),
+    statusNote: `**Question ${session.questionIndex + 1}:** ${QUESTIONS[session.questionIndex]}`,
+    micWarning: session.lastAnswerHadVoice === false,
+    actionRows: buildAnswerControlRows(session.guildId),
+  });
   return true;
 }
 
@@ -1184,7 +1724,11 @@ async function handleInterviewDiscontinueModal(interaction, guildId) {
   session.waitingForContinue = false;
 
   await interaction.deferUpdate();
-  await interaction.message.edit({ components: [] }).catch(() => null);
+  await updateInterviewStatusMessage(interaction.client, session, {
+    description: `<@${session.intervieweeId}> Interview ending early…`,
+    statusNote: session.discontinueReason,
+    actionRows: [],
+  });
   await finishInterview(interaction.client, session);
   return true;
 }
@@ -1218,6 +1762,20 @@ async function handleInterviewInteraction(interaction) {
   if (interaction.isButton() && interaction.customId.startsWith(DENY_PREFIX)) {
     const appId = interaction.customId.slice(DENY_PREFIX.length);
     return handleInterviewDenyButton(interaction, appId);
+  }
+
+  if (interaction.isButton() && interaction.customId.startsWith(ASK_AGAIN_PREFIX)) {
+    const appId = interaction.customId.slice(ASK_AGAIN_PREFIX.length);
+    return handleInterviewAskAgain(interaction, appId);
+  }
+
+  if (interaction.isStringSelectMenu() && interaction.customId.startsWith(ASK_AGAIN_SELECT_PREFIX)) {
+    const appId = interaction.customId.slice(ASK_AGAIN_SELECT_PREFIX.length);
+    return handleInterviewAskAgainSelect(interaction, appId);
+  }
+
+  if (interaction.isButton() && interaction.customId.startsWith(RETAKE_READY_PREFIX)) {
+    return handleInterviewRetakeReady(interaction);
   }
 
   if (interaction.isButton() && interaction.customId.startsWith(CONTINUE_PREFIX)) {

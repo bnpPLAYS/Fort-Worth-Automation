@@ -59,6 +59,11 @@ const { buildSetupAuditLogCommand, handleSetupAuditLogCommand } = require("./aud
 const { buildRosterLayoutCommand, handleRosterLayoutCommand } = require("./roster-layout-command");
 const { runStartupHealthCheck } = require("./startup-health");
 const { BOT_NAME } = require("./constants");
+const {
+  handleInterviewCommand,
+  handleInterviewInteraction,
+  registerInterviewVoiceHandlers,
+} = require("./interview");
 
 const BOT_AVATAR_PATH = path.join(__dirname, "..", "assets", "bot-avatar.png");
 
@@ -83,6 +88,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildVoiceStates,
   ],
 });
 
@@ -137,6 +143,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   restoreQuizApplications(readyClient);
   restoreSupervisorExamApplications(readyClient);
   registerRoleSyncHandlers(readyClient);
+  registerInterviewVoiceHandlers(readyClient);
   startRoleSyncScheduler(readyClient);
   runStartupHealthCheck(readyClient).catch((error) => {
     console.error("[startup-health] Failed:", error);
@@ -154,6 +161,7 @@ client.on(Events.MessageCreate, async (message) => {
     await handleSupportMessage(message);
     await handleRideAlongMessage(message);
     await handlePromotionMessage(message);
+    await handleInterviewCommand(message);
   } catch (error) {
     console.error("Message handler error:", error);
   }
@@ -196,6 +204,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
 
     handled = await handleMassShiftInteraction(interaction);
+    if (handled) return;
+
+    handled = await handleInterviewInteraction(interaction);
     if (handled) return;
 
     handled = await handleStaffPanelCommand(interaction);

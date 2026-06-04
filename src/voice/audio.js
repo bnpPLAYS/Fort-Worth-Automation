@@ -131,12 +131,39 @@ async function joinMemberVoiceChannel(member) {
 
 async function playFile(player, filePath, { volume = 1 } = {}) {
   const resource = createMp3Resource(filePath);
+
   if (resource.volume && volume !== 1) {
     resource.volume.setVolume(Math.min(Math.max(volume, 0.1), 2));
   }
-  player.play(resource);
-  await entersState(player, AudioPlayerStatus.Playing, 30_000).catch(() => null);
-  await entersState(player, AudioPlayerStatus.Idle, 300_000);
+
+  await new Promise((resolve, reject) => {
+    const onError = (error) => {
+      cleanup();
+      reject(new Error(`Could not play audio in voice (${error.message}).`));
+    };
+
+    const cleanup = () => {
+      player.removeListener("error", onError);
+    };
+
+    player.on("error", onError);
+    player.play(resource);
+
+    entersState(player, AudioPlayerStatus.Playing, 30_000)
+      .then(() => entersState(player, AudioPlayerStatus.Idle, 300_000))
+      .then(() => {
+        cleanup();
+        resolve();
+      })
+      .catch((error) => {
+        cleanup();
+        reject(
+          error?.message?.includes("timed out")
+            ? new Error("Voice playback timed out. Check that FFmpeg is installed and the bot can speak.")
+            : error,
+        );
+      });
+  });
 }
 
 async function destroyVoiceSession(connection, player) {

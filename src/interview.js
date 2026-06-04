@@ -487,20 +487,59 @@ async function publishInterviewStatusMessage(
 }
 
 async function getInterviewStatusMessage(client, session) {
+  if (session?.statusMessage?.editable) {
+    return session.statusMessage;
+  }
+
   if (!session?.statusMessageId) return null;
 
   const textChannel = await client.channels.fetch(session.textChannelId).catch(() => null);
   if (!textChannel?.isTextBased()) return null;
 
-  return textChannel.messages.fetch(session.statusMessageId).catch(() => null);
+  const message = await textChannel.messages.fetch(session.statusMessageId).catch(() => null);
+  if (message) {
+    session.statusMessage = message;
+  }
+
+  return message;
 }
 
 async function updateInterviewStatusMessage(client, session, options = {}) {
   const message = await getInterviewStatusMessage(client, session);
-  if (!message) return null;
+  if (!message) {
+    console.warn("[interview] Status panel message not available for update.");
+    return null;
+  }
 
-  await message.edit(buildInterviewSessionPayload(session, { ...options, forEdit: true }));
-  return message;
+  try {
+    const edited = await message.edit(
+      buildInterviewSessionPayload(session, { ...options, forEdit: true }),
+    );
+    session.statusMessage = edited;
+    return edited;
+  } catch (error) {
+    console.error("[interview] Status panel edit failed:", error.message);
+    return null;
+  }
+}
+
+async function replyInterviewFailure(interaction, description, { session } = {}) {
+  const payload = buildV2EditPayload({
+    withTicketBanner: true,
+    title: "Voice Interview — Failed",
+    description,
+    actionRows: [],
+    fields: session ? buildInterviewSessionFields(session, { statusNote: "Try again or contact staff." }) : [],
+  });
+
+  if (interaction?.deferred || interaction?.replied) {
+    await interaction.editReply(payload).catch(() => null);
+    return;
+  }
+
+  if (interaction?.isRepliable()) {
+    await interaction.reply({ ...payload, ephemeral: true }).catch(() => null);
+  }
 }
 
 function formatAnswerPanelDescription(session) {
@@ -690,6 +729,7 @@ function buildSubmissionPayload(application, { actionRows = [], forEdit = false,
 }
 
 async function speakText(session, text) {
+  console.log(`[interview] TTS: ${text.slice(0, 80)}${text.length > 80 ? "…" : ""}`);
   const filePath = await synthesizeSpeech(text);
   try {
     if (session.recorder) {
@@ -1360,6 +1400,7 @@ async function startInterview(
     questionIndex: 0,
     notes: [],
     roleplayName,
+    roleplayNameRaw,
   };
 
   const statusMessage = await publishInterviewStatusMessage(
@@ -1417,7 +1458,9 @@ async function startInterview(
   const session = {
     guildId: guild.id,
     textChannelId: textChannel.id,
+    statusMessage,
     statusMessageId: statusMessage.id,
+    statusEphemeral: shouldUseEphemeralInterviewPanel(interaction, interviewee.id),
     voiceChannelId: interviewChannel.id,
     voiceChannelName: interviewChannel.name,
     createdInterviewChannel: true,
@@ -1451,7 +1494,12 @@ async function startInterview(
     statusNote: "Starting interview…",
   });
 
-  runInterviewLoop(client, session);
+  runInterviewLoop(client, session).catch(async (error) => {
+    console.error("[interview] Loop failed:", error);
+    await endInterview(client, session.guildId, {
+      reason: `The interview stopped: ${error.message ?? "unknown error"}`,
+    });
+  });
 }
 
 async function handleInterviewAccept(interaction, appId) {
@@ -2240,7 +2288,10 @@ async function handleInterviewRoleplayModal(interaction) {
     });
   } catch (error) {
     console.error("[interview] Start after roleplay modal failed:", error);
-    await interaction.editReply(error.message ?? "Could not start the interview.");
+    await replyInterviewFailure(
+      interaction,
+      error.message ?? "Could not start the interview.",
+    );
   }
 
   return true;

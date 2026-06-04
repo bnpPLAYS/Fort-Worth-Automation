@@ -273,7 +273,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const reply = { content: "Something went wrong. Please try again.", ephemeral: true };
     try {
       if (interaction.replied || interaction.deferred) {
-        await interaction.followUp(reply);
+        await interaction
+          .followUp(reply)
+          .catch(() => interaction.editReply(reply).catch(() => null));
       } else if (interaction.isRepliable()) {
         await interaction.reply(reply);
       }

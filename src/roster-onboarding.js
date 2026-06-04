@@ -11,6 +11,8 @@ const { recordMemberRosterLinkFromResult } = require("./roster-member-link");
 const { assignMemberRosterRoles, sendCallsignDm } = require("./member-roster");
 const { updateMemberCallsign } = require("./discord-callsign");
 
+const { pauseRoleSyncForMember, pauseRoleSyncGlobally } = require("./role-sync-guard");
+
 async function refreshMemberAfterRoles(member, reason) {
   await assignMemberRosterRoles(member, reason);
 
@@ -45,12 +47,18 @@ async function completeMemberRosterSetup(member, options) {
     throw new Error("Google Sheets is not configured on this bot.");
   }
 
+  pauseRoleSyncGlobally(45_000);
+  pauseRoleSyncForMember(member, 120_000);
+
   const rosterMember = await refreshMemberAfterRoles(member, reason);
   const currentCallsign = getRosterCallsignForMember(rosterMember);
 
   const rosterResult = useCadetCallsign
-    ? await assignCadetCallsign(roleplayName, { currentCallsign })
-    : await assignMemberToOpenRank(roleplayName, sheetRank, { currentCallsign });
+    ? await assignCadetCallsign(roleplayName, { currentCallsign, member: rosterMember })
+    : await assignMemberToOpenRank(roleplayName, sheetRank, {
+        currentCallsign,
+        member: rosterMember,
+      });
 
   const callsign = rosterResult.newCallsign ?? rosterResult.callsign;
   const rank = rosterResult.newRank ?? rosterResult.rank;

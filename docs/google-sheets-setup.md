@@ -152,6 +152,8 @@ Staff can also run: `node scripts/reorganize-roster-sections.js` (`--dry-run` to
 
 Run **after Discord promotions** (rank roles updated). For every member with role `1484951746852818944`:
 
+The bot also auto-syncs rank role changes every **5 minutes** (and on role updates). **Cadet roles are ignored** when a member also has a higher department rank, so PO+Cadet members are not moved back to cadet rows.
+
 1. **Only** members with role `1484951746852818944` are processed (not random server members).
 2. **Links** each eligible account to their sheet row using **`callsign | Name`** in their nickname (e.g. `3000 | J. Forman` → callsign `3000` on the roster). Plain numbers in a name without the pipe format are ignored.
 3. Reads their **highest matching rank** from Discord role names (compared to ranks on the sheet, top-to-bottom).

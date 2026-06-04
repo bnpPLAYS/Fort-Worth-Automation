@@ -33,11 +33,12 @@ const {
   ROSTER_SYNC_ROLE_ID,
   MEMBER_ROSTER_ROLE_IDS,
 } = require("../constants");
+const {
+  inferMemberRankFromDiscord,
+  setExcludedRankRoleIds,
+} = require("./rank-inference");
 
-const EXCLUDED_RANK_ROLE_IDS = new Set([
-  ROSTER_SYNC_ROLE_ID,
-  ...MEMBER_ROSTER_ROLE_IDS,
-]);
+setExcludedRankRoleIds([ROSTER_SYNC_ROLE_ID, ...MEMBER_ROSTER_ROLE_IDS]);
 
 function needsProbationaryRosterMove(entries, probationaryRank) {
   if (entries.length === 0) return false;
@@ -191,9 +192,9 @@ async function linkRosterAccountsFromCallsigns(guild) {
   };
 }
 
-async function promoteToProbationaryOnRoster(roleplayName, { currentCallsign } = {}) {
+async function promoteToProbationaryOnRoster(roleplayName, options = {}) {
   const probationaryRank = getProbationaryRankName();
-  return assignMemberToOpenRank(roleplayName, probationaryRank, { currentCallsign });
+  return assignMemberToOpenRank(roleplayName, probationaryRank, options);
 }
 
 async function syncMemberCallsignFromEntry(member, entry, { dmOnChange = true } = {}) {
@@ -267,6 +268,7 @@ async function fixProbationaryRosterForGuild(guild) {
 
       const rosterResult = await promoteToProbationaryOnRoster(roleplayName, {
         currentCallsign: getRosterCallsignForMember(member),
+        member,
       });
       const syncResult = await syncMemberCallsignFromEntry(
         member,
@@ -353,25 +355,12 @@ function getOrderedRanksFromEntries(entries) {
   return ordered;
 }
 
-function inferMemberRankFromDiscord(member, orderedSheetRanks) {
-  if (!member || orderedSheetRanks.length === 0) return null;
-
-  for (const sheetRank of orderedSheetRanks) {
-    const hasMatchingRole = member.roles.cache.some((role) => {
-      if (role.id === member.guild.id) return false;
-      if (EXCLUDED_RANK_ROLE_IDS.has(role.id)) return false;
-      return ranksMatch(sheetRank, role.name);
-    });
-
-    if (hasMatchingRole) {
-      return sheetRank;
-    }
+async function syncMemberRankFromDiscord(member, { dmOnChange = true } = {}) {
+  const { isRoleSyncPaused } = require("../role-sync-guard");
+  if (isRoleSyncPaused(member)) {
+    return { status: "paused" };
   }
 
-  return null;
-}
-
-async function syncMemberRankFromDiscord(member, { dmOnChange = true } = {}) {
   if (!hasRosterSyncRole(member)) {
     return { status: "skipped", reason: "Member does not have the department roster role." };
   }
@@ -425,6 +414,7 @@ async function syncMemberRankFromDiscord(member, { dmOnChange = true } = {}) {
 
   const rosterResult = await assignMemberToOpenRank(roleplayName, discordRank, {
     currentCallsign: getRosterCallsignForMember(member),
+    member,
   });
   const syncResult = await syncMemberCallsignFromEntry(
     member,

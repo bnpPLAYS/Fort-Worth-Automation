@@ -13,11 +13,17 @@ const {
   hasReorganizeMarker,
   REORGANIZE_VERSION,
 } = require("./google-sheets/roster-reorganize");
-const { MEMBER_ROSTER_ROLE_IDS, ROSTER_SYNC_ROLE_ID } = require("./constants");
+const { pauseRoleSyncForMember, pauseRoleSyncGlobally, isRoleSyncPaused } = require("./role-sync-guard");
 
 const ROLE_SYNC_INTERVAL_MS = Number.parseInt(process.env.ROLE_SYNC_INTERVAL_MS || "300000", 10);
-const EXCLUDED_ROLE_IDS = new Set([ROSTER_SYNC_ROLE_ID, ...MEMBER_ROSTER_ROLE_IDS]);
+const { MEMBER_ROSTER_ROLE_IDS, ROSTER_SYNC_ROLE_ID } = require("./constants");
+const {
+  setExcludedRankRoleIds,
+} = require("./google-sheets/rank-inference");
 
+setExcludedRankRoleIds([ROSTER_SYNC_ROLE_ID, ...MEMBER_ROSTER_ROLE_IDS]);
+
+const EXCLUDED_ROLE_IDS = new Set([ROSTER_SYNC_ROLE_ID, ...MEMBER_ROSTER_ROLE_IDS]);
 const memberRankFingerprints = new Map();
 let roleSyncTimer = null;
 let roleSyncRunning = false;
@@ -36,6 +42,9 @@ function getMemberRankFingerprint(member, orderedRanks) {
 }
 
 async function syncMemberIfRankChanged(member, orderedRanks, { reason = "scheduled" } = {}) {
+  if (isRoleSyncPaused(member)) {
+    return { status: "paused" };
+  }
   const fingerprint = getMemberRankFingerprint(member, orderedRanks);
   const previous = memberRankFingerprints.get(member.id);
 

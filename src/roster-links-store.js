@@ -61,6 +61,19 @@ function clearRosterLink(userId) {
   return true;
 }
 
+function findUserIdByCallsign(callsign) {
+  if (!callsign) return null;
+
+  const links = loadLinks();
+  for (const [userId, link] of Object.entries(links)) {
+    if (link?.callsign && String(link.callsign).replace(/\D/g, "") === String(callsign).replace(/\D/g, "")) {
+      return userId;
+    }
+  }
+
+  return null;
+}
+
 function purgeRosterLinks(guild, shouldKeepLink) {
   const links = loadLinks();
   let removed = 0;
@@ -84,5 +97,6 @@ module.exports = {
   getRosterLink,
   setRosterLink,
   clearRosterLink,
+  findUserIdByCallsign,
   purgeRosterLinks,
 };

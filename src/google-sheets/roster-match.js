@@ -146,6 +146,55 @@ function getCallsignFromMember(member) {
 }
 
 /** Callsign from department nickname (`3000 | Name`), or from stored link. */
+function findNamedEntriesByCallsign(entries, callsign) {
+  if (!callsign) return [];
+
+  return entries.filter(
+    (entry) => entry.name.length > 0 && callsignsMatch(entry.callsign, callsign),
+  );
+}
+
+function isCallsignOccupiedOnSheet(entries, callsign) {
+  return findNamedEntriesByCallsign(entries, callsign).length > 0;
+}
+
+/**
+ * Only clear rows that belong to the member being moved — never wipe unrelated names.
+ */
+function findEntriesToClearForAssignment(entries, roleplayName, { currentCallsign, member } = {}) {
+  const userId = member?.id ?? null;
+  const link = userId ? getRosterLink(userId) : null;
+
+  if (link?.rowNumber) {
+    const byRow = entries.filter(
+      (entry) =>
+        entry.rowNumber === link.rowNumber &&
+        entry.name.length > 0 &&
+        normalizeName(entry.name) === normalizeName(link.roleplayName),
+    );
+    if (byRow.length > 0) {
+      return byRow;
+    }
+  }
+
+  if (currentCallsign) {
+    try {
+      return resolveEntriesByNameAndCallsign(entries, roleplayName, currentCallsign, {
+        requireUnique: false,
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  const byName = filterEntriesByName(entries, roleplayName);
+  if (byName.length === 1) {
+    return byName;
+  }
+
+  return [];
+}
+
 function getRosterCallsignForMember(member) {
   if (!hasRosterSyncRole(member)) return null;
 
@@ -167,6 +216,9 @@ module.exports = {
   callsignsMatch,
   filterEntriesByName,
   resolveEntriesByNameAndCallsign,
+  findNamedEntriesByCallsign,
+  isCallsignOccupiedOnSheet,
+  findEntriesToClearForAssignment,
   getMemberRosterIdentity,
   entryMatchesMemberIdentity,
   findRosterEntryForMember,

@@ -1,22 +1,18 @@
 const { PermissionFlagsBits, SlashCommandBuilder } = require("discord.js");
-const { ROSTER_ADD_STAFF_ROLE_IDS } = require("./constants");
+const { ROSTER_ADD_STAFF_ROLE_IDS, MEMBER_ROSTER_ROLE_IDS } = require("./constants");
 const { formatRoleplayInitials } = require("./roleplay-name");
-const { updateMemberCallsign } = require("./discord-callsign");
-const { resolveRankForRosterAdd } = require("./rank-options");
-const { MEMBER_ROSTER_ROLE_IDS } = require("./constants");
-const { sendCallsignDm, mergeRoleIds } = require("./member-roster");
-const { getRosterCallsignForMember } = require("./google-sheets/roster-match");
-const { recordMemberRosterLink } = require("./roster-member-link");
+const { resolveRankForRosterAdd, CADET_ROLE_IDS } = require("./rank-options");
+const { mergeRoleIds } = require("./member-roster");
+const { getRosterCallsignForMember, findNamedEntriesByCallsign, normalizeName } = require("./google-sheets/roster-match");
 const {
   isSheetsConfigured,
   getSheetsConfigHelpMessage,
+  getRosterRows,
 } = require("./google-sheets/client");
 const { getRosterRanksWithOpenSlots } = require("./google-sheets/roster-ranks");
-const {
-  assignMemberToOpenRank,
-  assignCadetCallsign,
-  findRosterEntriesForName,
-} = require("./google-sheets/roster-assign");
+const { findRosterEntriesForName } = require("./google-sheets/roster-assign");
+const { completeMemberRosterSetup } = require("./roster-onboarding");
+const { pauseRoleSyncForMember, pauseRoleSyncGlobally } = require("./role-sync-guard");
 const { buildV2Payload } = require("./v2-message");
 
 const COMMAND_NAME = "rosteradd";
@@ -177,6 +173,9 @@ async function handleRosterAddCommand(interaction) {
   }
 
   try {
+    pauseRoleSyncGlobally(45_000);
+    pauseRoleSyncForMember(member, 120_000);
+
     const memberCallsign = getRosterCallsignForMember(member);
     const existing = await findRosterEntriesForName(roleplayName, { callsign: memberCallsign, member });
 
@@ -200,17 +199,26 @@ async function handleRosterAddCommand(interaction) {
       }
     }
 
-    let rosterResult;
-    if (rankConfig.useCadetCallsign) {
-      rosterResult = await assignCadetCallsign(roleplayName, { currentCallsign: memberCallsign });
-    } else {
-      rosterResult = await assignMemberToOpenRank(roleplayName, rankConfig.sheetRank, {
-        currentCallsign: memberCallsign,
-      });
+    if (memberCallsign) {
+      const { entries } = await getRosterRows();
+      const callsignOwners = findNamedEntriesByCallsign(entries, memberCallsign).filter(
+        (entry) => normalizeName(entry.name) !== normalizeName(roleplayName),
+      );
+      if (callsignOwners.length > 0) {
+        await interaction.editReply(
+          `This member's nickname callsign **${memberCallsign}** is already used by **${callsignOwners[0].name}** on the roster.\n\n` +
+            "Clear or change their nickname before adding them.",
+        );
+        return true;
+      }
     }
 
-    const callsign = rosterResult.newCallsign ?? rosterResult.callsign;
-    const sheetRank = rosterResult.newRank ?? rosterResult.rank;
+    if (!rankConfig.useCadetCallsign) {
+      const cadetRolesToRemove = CADET_ROLE_IDS.filter((roleId) => member.roles.cache.has(roleId));
+      if (cadetRolesToRemove.length > 0) {
+        await member.roles.remove(cadetRolesToRemove, "Roster add — assigned department rank");
+      }
+    }
 
     const roleIds = mergeRoleIds(rankConfig.discordRoleIds, MEMBER_ROSTER_ROLE_IDS);
     const roleResult =
@@ -218,7 +226,18 @@ async function handleRosterAddCommand(interaction) {
         ? await assignRolesToMember(member, roleIds)
         : { added: [], failed: [], skipped: true };
 
-    const nicknameResult = await updateMemberCallsign(member, callsign, roleplayName);
+    const setup = await completeMemberRosterSetup(member, {
+      roleplayName,
+      sheetRank: rankConfig.sheetRank,
+      useCadetCallsign: rankConfig.useCadetCallsign,
+      isCadet: rankConfig.useCadetCallsign,
+      reason: "Roster add",
+      dmTitle: "You have been added to the **Fort Worth Police Department** roster.",
+    });
+
+    const callsign = setup.callsign;
+    const sheetRank = setup.rank;
+    const nicknameResult = setup.syncResult.nicknameResult ?? { ok: false };
 
     const fields = [
       { name: "Roster Name", value: roleplayName },
@@ -242,6 +261,9 @@ async function handleRosterAddCommand(interaction) {
     } else if (nicknameResult.changed) {
       fields.push({ name: "Nickname", value: nicknameResult.nickname });
     }
+    if (!setup.dmSent) {
+      notes.push("Could not DM callsign (member may have DMs disabled).");
+    }
 
     if (notes.length > 0) {
       fields.push({ name: "Notes", value: notes.join("\n") });
@@ -256,25 +278,6 @@ async function handleRosterAddCommand(interaction) {
         includeFiles: false,
       }),
     );
-
-    await sendCallsignDm(member.user, {
-      callsign,
-      roleplayName,
-      rank: sheetRank,
-      isCadet: rankConfig.useCadetCallsign,
-      title: "You have been added to the **Fort Worth Police Department** roster.",
-      extraLines:
-        nicknameResult.ok && nicknameResult.changed
-          ? [`Your Discord nickname is now \`${nicknameResult.nickname}\`.`]
-          : [],
-    });
-
-    recordMemberRosterLink(member, {
-      name: roleplayName,
-      callsign,
-      rank: sheetRank,
-      rowNumber: rosterResult.rowNumber,
-    });
   } catch (error) {
     console.error("Roster add failed:", error);
     await interaction.editReply(

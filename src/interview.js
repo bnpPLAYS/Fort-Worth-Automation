@@ -26,14 +26,19 @@ const {
   listInterviewApplications,
 } = require("./interview-applications-store");
 const { synthesizeSpeech, deleteTempFile } = require("./voice/tts");
-const { ensureMessageMember, getMemberVoiceChannel } = require("./voice/member-voice");
+const { ensureMessageMember } = require("./voice/member-voice");
 const { VoiceInterviewRecorder } = require("./voice/recorder");
 const {
-  joinMemberVoiceChannel,
+  joinVoiceChannelById,
   playFile,
   destroyVoiceSession,
   waitForUserToFinishSpeaking,
 } = require("./voice/audio");
+const {
+  createInterviewVoiceChannel,
+  moveMemberToInterviewChannel,
+  deleteInterviewVoiceChannel,
+} = require("./interview-voice-channel");
 
 const INTERVIEW_COMMAND = "-interview";
 const CONTINUE_PREFIX = "interview_continue:";
@@ -49,6 +54,8 @@ const MODAL_DENY_PREFIX = "voice_interview_deny_modal:";
 
 const GUIDE_CHANNEL_ID = "1484990957299564666";
 const DEFAULT_SUBMISSIONS_CHANNEL_ID = "1507976263141163008";
+const MIC_WARNING_TEXT =
+  "Please ensure you are near your microphone so we can understand you.";
 
 const QUESTIONS = [
   "How active are you on the server weekly?",
@@ -360,12 +367,41 @@ async function runQuestion(client, session) {
 
   if (session.cancelled) return;
 
-  await waitForUserToFinishSpeaking(session.connection, session.intervieweeId);
+  const speechResult = await waitForInterviewAnswer(session);
   session.waitingForSpeech = false;
 
   if (session.cancelled) return;
 
+  if (!speechResult.spoke) {
+    const textChannel = await client.channels.fetch(session.textChannelId).catch(() => null);
+    if (textChannel?.isTextBased()) {
+      await textChannel
+        .send(
+          `<@${session.intervieweeId}> We could not detect your voice. Move closer to your microphone or use **Add Note** on the panel if needed.`,
+        )
+        .catch(() => null);
+    }
+  }
+
   await postAnswerControlPanel(client, session);
+}
+
+async function waitForInterviewAnswer(session) {
+  let result = await waitForUserToFinishSpeaking(session.connection, session.intervieweeId);
+
+  if (!result.spoke) {
+    try {
+      await speakText(session, MIC_WARNING_TEXT);
+    } catch (error) {
+      console.warn("[interview] Mic warning TTS failed:", error.message);
+    }
+
+    result = await waitForUserToFinishSpeaking(session.connection, session.intervieweeId, {
+      timeoutMs: 90_000,
+    });
+  }
+
+  return result;
 }
 
 async function submitInterviewApplication(client, session, recordingPath) {
@@ -497,6 +533,11 @@ async function endInterview(client, guildId, { reason, silent = false } = {}) {
 
   await destroyVoiceSession(session.connection, session.player);
 
+  const guild = await client.guilds.fetch(guildId).catch(() => null);
+  if (guild && session.createdInterviewChannel) {
+    await deleteInterviewVoiceChannel(guild, session.voiceChannelId);
+  }
+
   if (!silent && reason) {
     const textChannel = await client.channels.fetch(session.textChannelId).catch(() => null);
     if (textChannel?.isTextBased()) {
@@ -548,56 +589,46 @@ async function resolveInterviewee(message, hostMember) {
       return { error: "That member is not in this server." };
     }
 
-    const hostChannel = await getMemberVoiceChannel(hostMember);
-    if (!hostChannel) {
-      return { error: "You must be in a voice channel to host an interview." };
-    }
-
-    const applicantChannel = await getMemberVoiceChannel(member);
-    if (!applicantChannel || applicantChannel.id !== hostChannel.id) {
-      return { error: `<@${member.id}> must be in your voice channel.` };
-    }
-
-    return { interviewee: member, hostChannel };
+    return { interviewee: member };
   }
 
-  const hostChannel = await getMemberVoiceChannel(hostMember);
-  if (!hostChannel) {
-    return { error: "Join a voice channel first, then run `-interview` or `/interview`." };
-  }
-
-  return {
-    interviewee: hostMember,
-    hostChannel,
-  };
+  return { interviewee: hostMember };
 }
 
-async function startInterview(client, { guild, textChannel, hostMember, interviewee, hostChannel }) {
+async function startInterview(client, { guild, textChannel, hostMember, interviewee }) {
   if (getSession(guild.id)) {
     throw new Error("An interview is already running in this server.");
   }
 
   const statusMessage = await textChannel.send(
-    `Joining **${hostChannel.name}** to start the voice interview for <@${interviewee.id}>…`,
+    `Creating a private interview voice channel for <@${interviewee.id}>…`,
   );
+
+  let interviewChannel;
+  try {
+    interviewChannel = await createInterviewVoiceChannel(guild, interviewee);
+    await moveMemberToInterviewChannel(interviewee, interviewChannel);
+  } catch (error) {
+    if (interviewChannel) {
+      await deleteInterviewVoiceChannel(guild, interviewChannel.id);
+    }
+    throw error;
+  }
 
   let voiceSession;
   try {
-    voiceSession = await joinMemberVoiceChannel(hostMember);
+    voiceSession = await joinVoiceChannelById(guild, interviewChannel.id);
   } catch (error) {
-    throw new Error(error.message ?? "Could not join the voice channel.");
-  }
-
-  if (voiceSession.voiceChannel.id !== hostChannel.id) {
-    await destroyVoiceSession(voiceSession.connection, voiceSession.player);
-    throw new Error("Could not join your voice channel.");
+    await deleteInterviewVoiceChannel(guild, interviewChannel.id);
+    throw new Error(error.message ?? "Could not join the interview voice channel.");
   }
 
   const session = {
     guildId: guild.id,
     textChannelId: textChannel.id,
-    voiceChannelId: hostChannel.id,
-    voiceChannelName: hostChannel.name,
+    voiceChannelId: interviewChannel.id,
+    voiceChannelName: interviewChannel.name,
+    createdInterviewChannel: true,
     intervieweeId: interviewee.id,
     startedById: hostMember.id,
     questionIndex: 0,
@@ -617,8 +648,9 @@ async function startInterview(client, { guild, textChannel, hostMember, intervie
   sessions.set(guild.id, session);
 
   await statusMessage.edit(
-    `Voice interview started for <@${interviewee.id}> in **${hostChannel.name}**.\n` +
-      `This session **is being recorded**. Answer each question in voice, then click the red **Continue** button here.`,
+    `Voice interview started for <@${interviewee.id}> in ${interviewChannel}.\n` +
+      `Only <@${interviewee.id}> can join that channel. This session **is being recorded**.\n` +
+      `Answer each question in voice, then use the control panel in this channel.`,
   );
 
   runInterviewLoop(client, session);
@@ -885,7 +917,6 @@ async function handleInterviewCommand(message) {
       textChannel: message.channel,
       hostMember,
       interviewee: resolved.interviewee,
-      hostChannel: resolved.hostChannel,
     });
   } catch (error) {
     console.error("[interview] Start failed:", error);
@@ -898,11 +929,11 @@ async function handleInterviewCommand(message) {
 function buildInterviewCommand() {
   return new SlashCommandBuilder()
     .setName("interview")
-    .setDescription("Start a voice interview in your current voice channel")
+    .setDescription("Start a voice interview — creates a private VC for the applicant")
     .addUserOption((option) =>
       option
         .setName("member")
-        .setDescription("Optional: staff can interview another member in your VC")
+        .setDescription("Optional: staff can interview another member")
         .setRequired(false),
     );
 }
@@ -946,7 +977,6 @@ async function handleInterviewSlashCommand(interaction) {
       textChannel: interaction.channel,
       hostMember,
       interviewee: resolved.interviewee,
-      hostChannel: resolved.hostChannel,
     });
 
     await interaction.deleteReply().catch(async () => {
@@ -1247,6 +1277,15 @@ function registerInterviewVoiceHandlers(client) {
     const session = getSession(newState.guild.id);
     if (!session) return;
 
+    if (
+      newState.channelId === session.voiceChannelId &&
+      newState.id !== session.intervieweeId &&
+      !newState.member?.user?.bot
+    ) {
+      await newState.disconnect("This interview channel is for the applicant only.").catch(() => null);
+      return;
+    }
+
     if (newState.id !== session.intervieweeId) return;
 
     const leftChannel =
@@ -1254,7 +1293,7 @@ function registerInterviewVoiceHandlers(client) {
 
     if (leftChannel) {
       await endInterview(client, session.guildId, {
-        reason: `<@${session.intervieweeId}> left the voice channel — interview ended without submission.`,
+        reason: `<@${session.intervieweeId}> left the interview voice channel — interview ended without submission.`,
       });
     }
   });

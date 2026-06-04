@@ -46,6 +46,49 @@ function createMp3Resource(filePath) {
   });
 }
 
+async function joinVoiceChannelById(guild, channelId) {
+  await ensureVoiceReady();
+
+  const voiceChannel =
+    guild.channels.cache.get(channelId) ??
+    (await guild.channels.fetch(channelId).catch(() => null));
+
+  if (!voiceChannel?.isVoiceBased()) {
+    throw new Error("Interview voice channel not found.");
+  }
+
+  const me = guild.members.me ?? (await guild.members.fetchMe().catch(() => null));
+  const permissions = voiceChannel.permissionsFor(me);
+  if (!permissions?.has(PermissionFlagsBits.Connect) || !permissions?.has(PermissionFlagsBits.Speak)) {
+    throw new Error("I need **Connect** and **Speak** permission in the interview voice channel.");
+  }
+
+  const existing = getVoiceConnection(guild.id);
+  if (existing) {
+    existing.destroy();
+  }
+
+  const connection = joinVoiceChannel({
+    channelId: voiceChannel.id,
+    guildId: guild.id,
+    adapterCreator: guild.voiceAdapterCreator,
+    selfDeaf: false,
+    selfMute: false,
+  });
+
+  try {
+    await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+  } catch (error) {
+    connection.destroy();
+    throw new Error("Could not connect to voice. Check bot permissions and try again.");
+  }
+
+  const player = createAudioPlayer();
+  connection.subscribe(player);
+
+  return { connection, player, voiceChannel };
+}
+
 async function joinMemberVoiceChannel(member) {
   await ensureVoiceReady();
 
@@ -115,10 +158,12 @@ function waitForUserToFinishSpeaking(connection, userId, { timeoutMs = 180_000, 
     const receiver = connection.receiver;
     let spoke = false;
     let speechStartedAt = 0;
+    let timedOut = false;
 
     const timeout = setTimeout(() => {
+      timedOut = true;
       cleanup();
-      resolve({ spoke });
+      resolve({ spoke: false, timedOut: true });
     }, timeoutMs);
 
     function onStart(id) {
@@ -131,7 +176,7 @@ function waitForUserToFinishSpeaking(connection, userId, { timeoutMs = 180_000, 
       if (id !== userId || !spoke) return;
       if (Date.now() - speechStartedAt < minSpeechMs) return;
       cleanup();
-      resolve({ spoke: true });
+      resolve({ spoke: true, timedOut: false });
     }
 
     function cleanup() {
@@ -146,6 +191,7 @@ function waitForUserToFinishSpeaking(connection, userId, { timeoutMs = 180_000, 
 }
 
 module.exports = {
+  joinVoiceChannelById,
   joinMemberVoiceChannel,
   playFile,
   destroyVoiceSession,

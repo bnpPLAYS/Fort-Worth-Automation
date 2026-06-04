@@ -66,6 +66,9 @@ const {
   registerInterviewVoiceHandlers,
   restoreInterviewApplications,
   buildInterviewCommand,
+  buildInterviewClearCommand,
+  handleInterviewClearCommand,
+  handleInterviewClearSlashCommand,
 } = require("./interview");
 const { handleSilenceCommand } = require("./silence");
 const { ensureVoiceReady } = require("./voice/init");
@@ -121,6 +124,7 @@ const commands = [
   buildSetupAuditLogCommand(),
   buildRosterLayoutCommand(),
   buildInterviewCommand(),
+  buildInterviewClearCommand(),
 ].map((command) => command.toJSON());
 
 async function registerCommands() {
@@ -172,6 +176,7 @@ client.on(Events.MessageCreate, async (message) => {
     await handleRideAlongMessage(message);
     await handlePromotionMessage(message);
     await handleInterviewCommand(message);
+    await handleInterviewClearCommand(message);
     await handleSilenceCommand(message);
   } catch (error) {
     console.error("Message handler error:", error);
@@ -220,7 +225,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     handled = await handleInterviewInteraction(interaction);
     if (handled) return;
 
-    handled = await handleInterviewSlashCommand(interaction);
+    handled = await handleInterviewClearSlashCommand(interaction);
+    if (!handled) handled = await handleInterviewSlashCommand(interaction);
     if (handled) return;
 
     handled = await handleStaffPanelCommand(interaction);

@@ -52,9 +52,28 @@ function listInterviewApplications({ status } = {}) {
   return applications.filter((application) => application.status === status);
 }
 
+function clearInterviewApplicationsForUser(userId) {
+  const applications = loadApplications();
+  const removedAppIds = [];
+
+  for (const [appId, application] of Object.entries(applications)) {
+    if (application.userId === userId) {
+      delete applications[appId];
+      removedAppIds.push(appId);
+    }
+  }
+
+  if (removedAppIds.length > 0) {
+    saveApplications(applications);
+  }
+
+  return removedAppIds;
+}
+
 module.exports = {
   getInterviewApplication,
   saveInterviewApplication,
   deleteInterviewApplication,
   listInterviewApplications,
+  clearInterviewApplicationsForUser,
 };

@@ -61,10 +61,20 @@ function getCooldownRemainingMs(userId, type) {
   return Math.max(0, end - Date.now());
 }
 
+function clearCooldown(userId, type) {
+  const cooldowns = loadCooldowns();
+  const key = getCooldownKey(userId, type);
+  if (!cooldowns[key]) return false;
+  delete cooldowns[key];
+  saveCooldowns(cooldowns);
+  return true;
+}
+
 module.exports = {
   COOLDOWN_MS,
   getCooldownEnd,
   isOnCooldown,
   setCooldown,
   getCooldownRemainingMs,
+  clearCooldown,
 };

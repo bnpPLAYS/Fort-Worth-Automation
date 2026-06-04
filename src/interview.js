@@ -12,7 +12,7 @@ const {
   TextInputStyle,
 } = require("discord.js");
 const fs = require("fs");
-const { COOLDOWN_MS, getCooldownEnd, isOnCooldown, setCooldown } = require("./cooldowns");
+const { COOLDOWN_MS, clearCooldown, getCooldownEnd, isOnCooldown, setCooldown } = require("./cooldowns");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { STAFF_PING_ROLE_ID } = require("./constants");
 const { buildV2Payload, buildV2EditPayload } = require("./v2-message");
@@ -30,6 +30,7 @@ const {
   getInterviewApplication,
   saveInterviewApplication,
   listInterviewApplications,
+  clearInterviewApplicationsForUser,
 } = require("./interview-applications-store");
 const { synthesizeSpeech, deleteTempFile } = require("./voice/tts");
 const { ensureMessageMember, getMemberVoiceChannel } = require("./voice/member-voice");
@@ -47,6 +48,7 @@ const {
 } = require("./interview-voice-channel");
 
 const INTERVIEW_COMMAND = "-interview";
+const INTERVIEW_CLEAR_COMMAND = "-clearinterview";
 const CONTINUE_PREFIX = "interview_continue:";
 const DISCONTINUE_PREFIX = "interview_discontinue:";
 const ADD_NOTE_PREFIX = "interview_add_note:";
@@ -1656,6 +1658,110 @@ async function handleInterviewDenyModal(interaction, appId) {
   return true;
 }
 
+function canClearInterviewState(member, targetUserId) {
+  if (!member) return false;
+  if (member.id === targetUserId) return true;
+  return canInterviewOthers(member);
+}
+
+function clearInterviewStateForUser(guildId, userId) {
+  const removedAppIds = clearInterviewApplicationsForUser(userId);
+
+  for (const appId of removedAppIds) {
+    applications.delete(appId);
+  }
+
+  pendingInterviewStarts.delete(pendingInterviewKey(guildId, userId));
+
+  const hadCooldown = clearCooldown(userId, INTERVIEW_COOLDOWN_TYPE);
+
+  return { removedAppIds, hadCooldown };
+}
+
+async function handleInterviewClearCommand(message) {
+  if (message.author.bot || !message.guild) return false;
+
+  const content = message.content.trim();
+  const lower = content.toLowerCase();
+  if (lower !== INTERVIEW_CLEAR_COMMAND && !lower.startsWith(`${INTERVIEW_CLEAR_COMMAND} `)) {
+    return false;
+  }
+
+  if (hasProcessed(`interview-clear:${message.id}`)) return true;
+  markProcessed(`interview-clear:${message.id}`);
+
+  const hostMember = await ensureMessageMember(message);
+  if (!hostMember) {
+    await message.reply("Could not resolve your server membership.");
+    return true;
+  }
+
+  const mentioned = message.mentions.users.first();
+  const targetUserId = mentioned?.id ?? hostMember.id;
+
+  if (!canClearInterviewState(hostMember, targetUserId)) {
+    await message.reply(
+      "You can clear your own interview state, or mention a member if you have staff permissions.",
+    );
+    return true;
+  }
+
+  const result = clearInterviewStateForUser(message.guild.id, targetUserId);
+  const targetLabel = mentioned ? `<@${targetUserId}>` : "your";
+
+  await message.reply(
+    `Cleared ${targetLabel} voice interview test state: **${result.removedAppIds.length}** saved application(s)` +
+      (result.hadCooldown ? ", interview cooldown removed" : "") +
+      ". You can start a new interview if no session is currently running in this server.",
+  );
+
+  return true;
+}
+
+async function handleInterviewClearSlashCommand(interaction) {
+  if (!interaction.isChatInputCommand() || interaction.commandName !== "clearinterview") {
+    return false;
+  }
+
+  if (!interaction.guild) {
+    await interaction.reply({ content: "This command can only be used in a server.", ephemeral: true });
+    return true;
+  }
+
+  const hostMember =
+    interaction.member ?? (await interaction.guild.members.fetch(interaction.user.id).catch(() => null));
+
+  if (!hostMember) {
+    await interaction.reply({ content: "Could not resolve your server membership.", ephemeral: true });
+    return true;
+  }
+
+  const targetUser = interaction.options.getUser("member");
+  const targetUserId = targetUser?.id ?? hostMember.id;
+
+  if (!canClearInterviewState(hostMember, targetUserId)) {
+    await interaction.reply({
+      content:
+        "You can clear your own interview state, or specify a member if you have staff permissions.",
+      ephemeral: true,
+    });
+    return true;
+  }
+
+  const result = clearInterviewStateForUser(interaction.guild.id, targetUserId);
+  const targetLabel = targetUser ? `<@${targetUserId}>` : "your";
+
+  await interaction.reply({
+    content:
+      `Cleared ${targetLabel} voice interview test state: **${result.removedAppIds.length}** saved application(s)` +
+      (result.hadCooldown ? ", interview cooldown removed" : "") +
+      ". You can start a new interview if no session is currently running in this server.",
+    ephemeral: true,
+  });
+
+  return true;
+}
+
 async function handleInterviewCommand(message) {
   if (message.author.bot || !message.guild) return false;
 
@@ -1704,6 +1810,18 @@ function buildInterviewCommand() {
       option
         .setName("member")
         .setDescription("Optional: staff can interview another member")
+        .setRequired(false),
+    );
+}
+
+function buildInterviewClearCommand() {
+  return new SlashCommandBuilder()
+    .setName("clearinterview")
+    .setDescription("Clear saved voice interview applications and cooldown for testing")
+    .addUserOption((option) =>
+      option
+        .setName("member")
+        .setDescription("Optional: staff can clear another member's interview state")
         .setRequired(false),
     );
 }
@@ -2267,7 +2385,10 @@ module.exports = {
   buildInterviewPanelButton,
   promptInterviewRoleplayName,
   buildInterviewCommand,
+  buildInterviewClearCommand,
   handleInterviewCommand,
+  handleInterviewClearCommand,
+  handleInterviewClearSlashCommand,
   handleInterviewSlashCommand,
   handleInterviewInteraction,
   registerInterviewVoiceHandlers,

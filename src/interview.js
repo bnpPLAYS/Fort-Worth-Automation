@@ -12,7 +12,7 @@ const {
   TextInputStyle,
 } = require("discord.js");
 const fs = require("fs");
-const { getCooldownEnd, setCooldown } = require("./cooldowns");
+const { COOLDOWN_MS, getCooldownEnd, isOnCooldown, setCooldown } = require("./cooldowns");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { STAFF_PING_ROLE_ID } = require("./constants");
 const { buildV2Payload, buildV2EditPayload } = require("./v2-message");
@@ -28,7 +28,7 @@ const {
   listInterviewApplications,
 } = require("./interview-applications-store");
 const { synthesizeSpeech, deleteTempFile } = require("./voice/tts");
-const { ensureMessageMember } = require("./voice/member-voice");
+const { ensureMessageMember, getMemberVoiceChannel } = require("./voice/member-voice");
 const { VoiceInterviewRecorder } = require("./voice/recorder");
 const {
   joinVoiceChannelById,
@@ -59,6 +59,10 @@ const MODAL_DENY_PREFIX = "voice_interview_deny_modal:";
 const MODAL_ROLEPLAY_PREFIX = "interview_roleplay_modal:";
 const INTERVIEW_START_PREFIX = "interview_start:";
 const INTERVIEW_DASHBOARD_BUTTON_ID = "interview_apply";
+const INTERVIEW_COOLDOWN_TYPE = "interview";
+const INTERVIEW_QUEUE_GUILD_ID = "1484948320534265879";
+const INTERVIEW_QUEUE_VOICE_CHANNEL_ID = "1495604479070961694";
+const INTERVIEW_QUEUE_VOICE_URL = `https://discord.com/channels/${INTERVIEW_QUEUE_GUILD_ID}/${INTERVIEW_QUEUE_VOICE_CHANNEL_ID}`;
 
 const GUIDE_CHANNEL_ID = "1484990957299564666";
 const DEFAULT_SUBMISSIONS_CHANNEL_ID = "1507976263141163008";
@@ -106,6 +110,58 @@ function getPendingInterviewStart(guildId, intervieweeId) {
   return pending;
 }
 
+function hasPendingInterviewSubmission(userId) {
+  return listInterviewApplications({ status: "pending" }).some(
+    (application) => application.userId === userId,
+  );
+}
+
+function isIntervieweeInActiveSession(guildId, userId) {
+  const session = getSession(guildId);
+  return session?.intervieweeId === userId;
+}
+
+async function assertIntervieweeInQueueVoice(interviewee) {
+  const voiceChannel = await getMemberVoiceChannel(interviewee);
+
+  if (!voiceChannel) {
+    throw new Error(
+      `Join the interview waiting voice channel first, then start again:\n${INTERVIEW_QUEUE_VOICE_URL}\n\n` +
+        "Once you're connected there, we'll move you into a private voice channel for the interview.",
+    );
+  }
+
+  if (voiceChannel.id !== INTERVIEW_QUEUE_VOICE_CHANNEL_ID) {
+    throw new Error(
+      `Join the interview waiting voice channel to continue:\n${INTERVIEW_QUEUE_VOICE_URL}\n\n` +
+        `You are currently in **#${voiceChannel.name}**.`,
+    );
+  }
+}
+
+async function assertIntervieweeCanStart(guild, interviewee, { checkQueueVoice = false } = {}) {
+  if (isIntervieweeInActiveSession(guild.id, interviewee.id)) {
+    throw new Error("You already have a voice interview in progress in this server.");
+  }
+
+  if (hasPendingInterviewSubmission(interviewee.id)) {
+    throw new Error(
+      "You already have a voice interview awaiting staff review. Wait until it is accepted or denied before starting another.",
+    );
+  }
+
+  if (isOnCooldown(interviewee.id, INTERVIEW_COOLDOWN_TYPE)) {
+    const cooldownEnd = getCooldownEnd(interviewee.id, INTERVIEW_COOLDOWN_TYPE);
+    throw new Error(
+      `You cannot start another voice interview until <t:${Math.floor(cooldownEnd / 1000)}:F> (<t:${Math.floor(cooldownEnd / 1000)}:R>).`,
+    );
+  }
+
+  if (checkQueueVoice) {
+    await assertIntervieweeInQueueVoice(interviewee);
+  }
+}
+
 function buildRoleplayNameModal(guildId, intervieweeId) {
   return new ModalBuilder()
     .setCustomId(`${MODAL_ROLEPLAY_PREFIX}${guildId}:${intervieweeId}`)
@@ -133,13 +189,14 @@ function buildInterviewStartButton(guildId, intervieweeId) {
 }
 
 function buildRoleplayPromptDescription(interviewee, hostMember) {
-  const intro =
-    hostMember.id === interviewee.id
-      ? `<@${interviewee.id}> Before your voice interview begins, enter your **full roleplay name**.`
-      : `<@${interviewee.id}> Staff started a voice interview for you. Enter your **full roleplay name** before joining voice.`;
+  const selfServe = hostMember.id === interviewee.id;
+  const intro = selfServe
+    ? `<@${interviewee.id}> Join the interview waiting voice channel, then enter your **full roleplay name**.`
+    : `<@${interviewee.id}> Staff started a voice interview for you. Join the waiting voice channel, then enter your **full roleplay name**.`;
 
   return (
     `${intro}\n\n` +
+    `Waiting room: ${INTERVIEW_QUEUE_VOICE_URL}\n\n` +
     "Example: **John Smith** → roster name **J. Smith**\n\n" +
     "If you pass, this name is used to add you to the roster."
   );
@@ -149,6 +206,9 @@ async function promptInterviewRoleplayName(client, { guild, textChannel, hostMem
   if (getSession(guild.id)) {
     throw new Error("An interview is already running in this server.");
   }
+
+  const selfServe = hostMember.id === interviewee.id;
+  await assertIntervieweeCanStart(guild, interviewee, { checkQueueVoice: selfServe });
 
   pendingInterviewStarts.set(pendingInterviewKey(guild.id, interviewee.id), {
     guildId: guild.id,
@@ -1249,6 +1309,8 @@ async function startInterview(
     throw new Error("A roleplay name is required before starting the interview.");
   }
 
+  await assertIntervieweeCanStart(guild, interviewee, { checkQueueVoice: true });
+
   const bootstrapSession = {
     intervieweeId: interviewee.id,
     questionIndex: 0,
@@ -1539,7 +1601,7 @@ async function handleInterviewDenyModal(interaction, appId) {
   await interaction.deferReply({ ephemeral: true });
 
   const denyReason = interaction.fields.getTextInputValue("deny_reason");
-  const cooldownEnd = setCooldown(application.userId);
+  const cooldownEnd = setCooldown(application.userId, COOLDOWN_MS, INTERVIEW_COOLDOWN_TYPE);
 
   application.status = "denied";
   application.denyReason = denyReason;
@@ -1618,7 +1680,9 @@ async function handleInterviewCommand(message) {
 function buildInterviewCommand() {
   return new SlashCommandBuilder()
     .setName("interview")
-    .setDescription("Start a voice interview — enter roleplay name, then join private VC")
+    .setDescription(
+      "Start a voice interview — join the waiting VC, enter roleplay name, then private VC",
+    )
     .addUserOption((option) =>
       option
         .setName("member")
@@ -1930,6 +1994,20 @@ async function handleInterviewStartButton(interaction) {
       content: "This interview prompt expired. Run `-interview` or `/interview` again.",
       ephemeral: true,
     });
+    return true;
+  }
+
+  const guild = await interaction.client.guilds.fetch(guildId).catch(() => null);
+  const interviewee = await guild?.members.fetch(intervieweeId).catch(() => null);
+  if (!guild || !interviewee) {
+    await interaction.reply({ content: "Could not verify your membership. Try again.", ephemeral: true });
+    return true;
+  }
+
+  try {
+    await assertIntervieweeCanStart(guild, interviewee, { checkQueueVoice: true });
+  } catch (error) {
+    await interaction.reply({ content: error.message, ephemeral: true });
     return true;
   }
 

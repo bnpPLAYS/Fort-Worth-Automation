@@ -1,5 +1,6 @@
 const {
   getRosterRows,
+  invalidateRosterCache,
   batchUpdateCells,
   getSheetsClient,
   getSpreadsheetId,
@@ -70,6 +71,8 @@ async function expandRankSlots(rank, count = DEFAULT_EXPAND_COUNT) {
       ],
     },
   });
+
+  invalidateRosterCache();
 
   const rankCol = columnIndexToLetter(rankIndex);
   const nameCol = columnIndexToLetter(nameIndex);

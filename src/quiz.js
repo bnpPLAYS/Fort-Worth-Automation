@@ -14,7 +14,7 @@ const { STAFF_PING_ROLE_ID, BOT_NAME } = require("./constants");
 const { buildV2Payload, buildV2EditPayload } = require("./v2-message");
 const { extractCallsignFromDisplayName } = require("./discord-callsign");
 const { formatRoleplayInitials } = require("./roleplay-name");
-const { isSheetsConfigured } = require("./google-sheets/client");
+const { isSheetsConfigured, isSheetsQuotaError } = require("./google-sheets/client");
 const { completeMemberRosterSetup } = require("./roster-onboarding");
 const {
   getQuizApplication,
@@ -690,7 +690,9 @@ async function handleInteraction(interaction) {
           (setup.dmSent ? "" : " (DM failed — check privacy settings)");
       } catch (error) {
         console.error("Quiz roster assignment failed:", error);
-        rosterSummary = `\nRoster assignment failed: ${error.message}`;
+        rosterSummary = isSheetsQuotaError(error)
+          ? "\nRoster assignment failed: Google Sheets read quota was exceeded. Discord roles were still assigned — wait about a minute, then staff can run `/rosteradd` to finish the sheet row."
+          : `\nRoster assignment failed: ${error.message}`;
       }
     }
 

@@ -4,6 +4,43 @@ const { google } = require("googleapis");
 
 let sheetsClient = null;
 
+const ROSTER_CACHE_TTL_MS = Number.parseInt(process.env.ROSTER_CACHE_TTL_MS || "90000", 10);
+let rosterCache = null;
+
+function invalidateRosterCache() {
+  rosterCache = null;
+}
+
+function isSheetsQuotaError(error) {
+  const message = String(error?.message ?? "");
+  return (
+    error?.code === 429 ||
+    message.includes("Quota exceeded") ||
+    message.includes("rateLimitExceeded") ||
+    message.includes("RESOURCE_EXHAUSTED")
+  );
+}
+
+async function withSheetsRetry(operation, { label = "sheets" } = {}) {
+  const maxAttempts = 4;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isSheetsQuotaError(error) || attempt === maxAttempts - 1) {
+        throw error;
+      }
+
+      const delayMs = Math.min(30_000, 2000 * 2 ** attempt);
+      console.warn(`[${label}] Google Sheets quota hit — retrying in ${delayMs}ms`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  return null;
+}
+
 function normalizeEnv(value) {
   if (!value) return "";
   return String(value).trim().replace(/^["']|["']$/g, "");
@@ -129,15 +166,19 @@ async function getSheetsClient() {
   return sheetsClient;
 }
 
-async function getRosterRows() {
+async function fetchRosterRowsFromApi() {
   const sheets = await getSheetsClient();
   const sheetName = getRosterSheetName();
   const range = `${sheetName}!A:H`;
 
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: getSpreadsheetId(),
-    range,
-  });
+  const response = await withSheetsRetry(
+    () =>
+      sheets.spreadsheets.values.get({
+        spreadsheetId: getSpreadsheetId(),
+        range,
+      }),
+    { label: "roster-read" },
+  );
 
   const rows = response.data.values ?? [];
   if (rows.length === 0) {
@@ -188,6 +229,20 @@ async function getRosterRows() {
   };
 }
 
+async function getRosterRows({ fresh = false } = {}) {
+  if (
+    !fresh &&
+    rosterCache &&
+    Date.now() - rosterCache.fetchedAt < ROSTER_CACHE_TTL_MS
+  ) {
+    return rosterCache.data;
+  }
+
+  const data = await fetchRosterRowsFromApi();
+  rosterCache = { data, fetchedAt: Date.now() };
+  return data;
+}
+
 async function getSheetId(sheetName = getRosterSheetName()) {
   const sheets = await getSheetsClient();
   const response = await sheets.spreadsheets.get({
@@ -206,13 +261,19 @@ async function getSheetId(sheetName = getRosterSheetName()) {
 async function batchUpdateCells(updates) {
   const sheets = await getSheetsClient();
 
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId: getSpreadsheetId(),
-    requestBody: {
-      valueInputOption: "USER_ENTERED",
-      data: updates,
-    },
-  });
+  await withSheetsRetry(
+    () =>
+      sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: getSpreadsheetId(),
+        requestBody: {
+          valueInputOption: "USER_ENTERED",
+          data: updates,
+        },
+      }),
+    { label: "roster-write" },
+  );
+
+  invalidateRosterCache();
 }
 
 module.exports = {
@@ -226,6 +287,8 @@ module.exports = {
   getCredentialsPath,
   getSheetsClient,
   getRosterRows,
+  invalidateRosterCache,
+  isSheetsQuotaError,
   getSheetId,
   batchUpdateCells,
   columnIndexToLetter,

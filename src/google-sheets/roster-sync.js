@@ -52,7 +52,8 @@ function needsProbationaryRosterMove(entries, probationaryRank) {
   return onCadet || !onProbationary;
 }
 
-async function resolveRoleplayNameForMember(member, fallbackName = "") {
+async function resolveRoleplayNameForMember(member, fallbackName = "", options = {}) {
+  const { entries: cachedEntries } = options;
   const fromNickname = getRoleplayNameFromMember(member);
   const linkedName = getLinkedRoleplayName(member);
 
@@ -68,7 +69,7 @@ async function resolveRoleplayNameForMember(member, fallbackName = "") {
     return linkedName;
   }
 
-  const namedEntries = await getNamedRosterEntries();
+  const namedEntries = await getNamedRosterEntries({ entries: cachedEntries });
   const matchedEntry = findRosterEntryForMember(namedEntries, member);
   if (matchedEntry) {
     return matchedEntry.name;
@@ -78,7 +79,7 @@ async function resolveRoleplayNameForMember(member, fallbackName = "") {
   const candidates = [fallbackName].filter(Boolean);
 
   for (const name of candidates) {
-    const entries = await findRosterEntriesForName(name, { callsign });
+    const entries = await findRosterEntriesForName(name, { callsign, entries: cachedEntries });
     if (entries.length === 1) {
       return entries[0].name;
     }
@@ -239,18 +240,22 @@ async function syncMemberCallsignFromEntry(member, entry, { dmOnChange = true } 
   };
 }
 
-async function resolveMemberSheetEntry(member) {
-  const namedEntries = await getNamedRosterEntries();
+async function resolveMemberSheetEntry(member, { entries: cachedEntries } = {}) {
+  const namedEntries = await getNamedRosterEntries({ entries: cachedEntries });
   let sheetEntry = findRosterEntryForMember(namedEntries, member);
 
   if (!sheetEntry) {
-    const roleplayName = await resolveRoleplayNameForMember(member);
+    const roleplayName = await resolveRoleplayNameForMember(member, "", { entries: cachedEntries });
     if (!roleplayName) {
       return null;
     }
 
     const callsign = getRosterCallsignForMember(member);
-    const sheetEntries = await findRosterEntriesForName(roleplayName, { callsign, member });
+    const sheetEntries = await findRosterEntriesForName(roleplayName, {
+      callsign,
+      member,
+      entries: cachedEntries,
+    });
     if (sheetEntries.length === 1) {
       sheetEntry = sheetEntries[0];
       recordMemberRosterLink(member, sheetEntry);
@@ -260,7 +265,7 @@ async function resolveMemberSheetEntry(member) {
   return sheetEntry ?? null;
 }
 
-async function revertCallsignDriftFromRoster(member, { dmOnChange = false } = {}) {
+async function revertCallsignDriftFromRoster(member, { dmOnChange = false, entries: cachedEntries } = {}) {
   const { isRoleSyncPaused } = require("../role-sync-guard");
   if (isRoleSyncPaused(member)) {
     return { status: "paused" };
@@ -270,7 +275,7 @@ async function revertCallsignDriftFromRoster(member, { dmOnChange = false } = {}
     return { status: "skipped", reason: "Member does not have the department roster role." };
   }
 
-  const sheetEntry = await resolveMemberSheetEntry(member);
+  const sheetEntry = await resolveMemberSheetEntry(member, { entries: cachedEntries });
   if (!sheetEntry) {
     return { status: "not_on_sheet", reason: "not on roster — use /rosteradd" };
   }
@@ -420,7 +425,7 @@ function getOrderedRanksFromEntries(entries) {
   return ordered;
 }
 
-async function syncMemberRankFromDiscord(member, { dmOnChange = true } = {}) {
+async function syncMemberRankFromDiscord(member, { dmOnChange = true, entries: cachedEntries } = {}) {
   const { isRoleSyncPaused } = require("../role-sync-guard");
   if (isRoleSyncPaused(member)) {
     return { status: "paused" };
@@ -430,7 +435,7 @@ async function syncMemberRankFromDiscord(member, { dmOnChange = true } = {}) {
     return { status: "skipped", reason: "Member does not have the department roster role." };
   }
 
-  const { entries } = await getRosterRows();
+  const entries = cachedEntries ?? (await getRosterRows()).entries;
   const orderedRanks = getOrderedRanksFromEntries(entries);
   const discordRank = inferMemberRankFromDiscord(member, orderedRanks);
 
@@ -438,7 +443,7 @@ async function syncMemberRankFromDiscord(member, { dmOnChange = true } = {}) {
     return { status: "no_rank_role" };
   }
 
-  let sheetEntry = await resolveMemberSheetEntry(member);
+  let sheetEntry = await resolveMemberSheetEntry(member, { entries });
 
   if (!sheetEntry) {
     return { status: "not_on_sheet", reason: "not on roster — use /rosteradd" };

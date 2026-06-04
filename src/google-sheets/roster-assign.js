@@ -95,7 +95,7 @@ async function assignMemberToOpenRank(
     console.log(
       `Expanded roster rank ${expansion.rank} by ${expansion.count} rows (${expansion.firstCallsign}-${expansion.lastCallsign})`,
     );
-    ({ entries, sheetName } = await getRosterRows());
+    ({ entries, sheetName } = await getRosterRows({ fresh: true }));
     openSlot = findOpenSlotInRank(entries, newRank);
   }
 
@@ -170,8 +170,8 @@ async function clearRosterForName(roleplayName, { currentCallsign, member } = {}
   return existingEntries.length;
 }
 
-async function findRosterEntriesForName(roleplayName, { callsign, member } = {}) {
-  const { entries } = await getRosterRows();
+async function findRosterEntriesForName(roleplayName, { callsign, member, entries: cachedEntries } = {}) {
+  const entries = cachedEntries ?? (await getRosterRows()).entries;
   const resolvedCallsign = callsign || (member ? getRosterCallsignForMember(member) : null);
 
   if (resolvedCallsign) {

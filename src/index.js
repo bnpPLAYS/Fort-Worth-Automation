@@ -1,5 +1,8 @@
 require("dotenv").config();
 
+const fs = require("fs");
+const path = require("path");
+
 const {
   Client,
   Events,
@@ -8,7 +11,7 @@ const {
   Routes,
   SlashCommandBuilder,
 } = require("discord.js");
-const { handlePanelCommand, handleInteraction, MIN_WORDS } = require("./quiz");
+const { handlePanelCommand, handleInteraction, MIN_WORDS, restoreQuizApplications } = require("./quiz");
 const {
   buildRideAlongCommand,
   handleCadetPanelCommand,
@@ -51,6 +54,13 @@ const {
   startRoleSyncScheduler,
   registerRoleSyncHandlers,
 } = require("./role-sync-scheduler");
+const { restoreSupervisorExamApplications } = require("./supervisor-exam");
+const { buildSetupAuditLogCommand, handleSetupAuditLogCommand } = require("./audit-setup");
+const { buildRosterLayoutCommand, handleRosterLayoutCommand } = require("./roster-layout-command");
+const { runStartupHealthCheck } = require("./startup-health");
+const { BOT_NAME } = require("./constants");
+
+const BOT_AVATAR_PATH = path.join(__dirname, "..", "assets", "bot-avatar.png");
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.CLIENT_ID;
@@ -97,6 +107,8 @@ const commands = [
   buildRideAlongCommand(),
   buildInfractionCommand(),
   buildInfoCommand(),
+  buildSetupAuditLogCommand(),
+  buildRosterLayoutCommand(),
 ].map((command) => command.toJSON());
 
 async function registerCommands() {
@@ -105,12 +117,30 @@ async function registerCommands() {
   console.log("Slash commands registered.");
 }
 
-client.once(Events.ClientReady, (readyClient) => {
+client.once(Events.ClientReady, async (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
   console.log(`Quiz Part 2 minimum: ${MIN_WORDS} words per answer`);
+
+  if (readyClient.user.username !== BOT_NAME) {
+    await readyClient.user.setUsername(BOT_NAME).catch((error) => {
+      console.warn(`Could not set bot username to "${BOT_NAME}":`, error.message);
+    });
+  }
+
+  if (fs.existsSync(BOT_AVATAR_PATH)) {
+    await readyClient.user.setAvatar(BOT_AVATAR_PATH).catch((error) => {
+      console.warn("Could not set bot avatar:", error.message);
+    });
+  }
+
   restoreRideAlongReminders(readyClient);
+  restoreQuizApplications(readyClient);
+  restoreSupervisorExamApplications(readyClient);
   registerRoleSyncHandlers(readyClient);
   startRoleSyncScheduler(readyClient);
+  runStartupHealthCheck(readyClient).catch((error) => {
+    console.error("[startup-health] Failed:", error);
+  });
 });
 
 client.on(Events.MessageCreate, async (message) => {
@@ -190,6 +220,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
 
     handled = await handleInfoCommand(interaction);
+    if (handled) return;
+
+    handled = await handleSetupAuditLogCommand(interaction);
+    if (handled) return;
+
+    handled = await handleRosterLayoutCommand(interaction);
     if (handled) return;
 
     if (interaction.isChatInputCommand() && interaction.commandName === "ping") {

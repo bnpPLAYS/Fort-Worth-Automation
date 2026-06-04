@@ -10,7 +10,7 @@ const {
   TextInputBuilder,
   TextInputStyle,
 } = require("discord.js");
-const { RA_STAFF_ROLE_IDS, PROBATIONARY_OFFICER_ROLE_ID, CADET_ENROLL_COOLDOWN_MS } = require("./constants");
+const { RA_STAFF_ROLE_IDS, PROBATIONARY_OFFICER_ROLE_ID, CADET_ENROLL_COOLDOWN_MS, BOT_NAME } = require("./constants");
 const { buildV2Payload, buildV2EditPayload } = require("./v2-message");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { isOnCooldown, setCooldown, getCooldownRemainingMs } = require("./cooldowns");
@@ -27,6 +27,7 @@ const {
   promoteToProbationaryOnRoster,
 } = require("./google-sheets/roster-sync");
 const { getRosterCallsignForMember } = require("./google-sheets/roster-match");
+const { logRosterAudit, logRosterResultAudit } = require("./roster-audit-log");
 const {
   recordMemberRosterLinkFromResult,
   removeMemberRosterLink,
@@ -570,6 +571,15 @@ async function executeRideAlongPass(interaction, request, applicant, score) {
   persistRideAlongRequest(request);
   await updateRideAlongNotification(interaction.client, request);
 
+  await logRosterResultAudit(interaction.client, interaction.guild.id, {
+    trigger: "Ride-along pass",
+    actor: interaction.member,
+    target: applicant,
+    roleplayName,
+    rosterResult,
+    notes: `Score ${score}/10`,
+  }).catch(() => null);
+
   let staffNote =
     `**Passed** with a score of **${score}/10**.\n` +
     `Moved **${roleplayName}** from **${rosterResult.previousCallsign ?? "cadet"}** to **${rosterResult.newCallsign}** (${rosterResult.newRank}).`;
@@ -642,7 +652,7 @@ function buildCadetPanelPayload() {
       "You will be asked for your **full roleplay name** (e.g. John Smith). The roster will list you as **J. Smith**.\n\n" +
       "After enrolling, you must complete **2 ride-alongs** before you can become a **Probationary Officer**.\n\n" +
       `When you are ready, go to <#${RA_REQUEST_CHANNEL_ID}> and run **/ridealong** to request a ride-along.`,
-    footer: "Fort Worth Police Department",
+    footer: BOT_NAME,
     actionRows: [buildCadetEnrollButton()],
   });
 }
@@ -799,6 +809,17 @@ async function handleCadetInteraction(interaction) {
       });
 
       recordMemberRosterLinkFromResult(member, cadetAssignment);
+
+      await logRosterAudit(interaction.client, interaction.guild.id, {
+        title: "Cadet enrolled",
+        actor: member,
+        target: member,
+        roleplayName,
+        rank: cadetAssignment.rank,
+        callsign: cadetAssignment.callsign,
+        rowNumber: cadetAssignment.rowNumber,
+        trigger: "Become Cadet",
+      }).catch(() => null);
     } catch (error) {
       console.error("Cadet callsign assignment failed:", error);
       reply += `\n\nCould not assign a cadet callsign on the roster: ${error.message}`;
@@ -880,7 +901,7 @@ function buildRideAlongModal() {
 function buildRideAlongCommand() {
   return new SlashCommandBuilder()
     .setName(RIDEALONG_COMMAND_NAME)
-    .setDescription("Request a ride-along with the Fort Worth Police Department");
+    .setDescription("Request a ride-along with the Houston Police Department");
 }
 
 async function submitRideAlongRequest(client, { guild, member, robloxUser, discordUser, availableFor }) {

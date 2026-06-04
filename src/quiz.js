@@ -10,12 +10,19 @@ const {
 } = require("discord.js");
 const { getCooldownEnd, isOnCooldown, setCooldown } = require("./cooldowns");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
-const { STAFF_PING_ROLE_ID } = require("./constants");
+const { STAFF_PING_ROLE_ID, BOT_NAME } = require("./constants");
 const { buildV2Payload, buildV2EditPayload } = require("./v2-message");
 const { extractCallsignFromDisplayName } = require("./discord-callsign");
 const { formatRoleplayInitials } = require("./roleplay-name");
 const { isSheetsConfigured } = require("./google-sheets/client");
 const { completeMemberRosterSetup } = require("./roster-onboarding");
+const {
+  getQuizApplication,
+  saveQuizApplication,
+  deleteQuizApplication,
+  listQuizApplications,
+} = require("./quiz-applications-store");
+const { logRosterAudit } = require("./roster-audit-log");
 
 const PANEL_COMMAND = "-panelquiz";
 const LEGACY_PANEL_COMMAND = "-panelfastpass";
@@ -169,7 +176,7 @@ function buildPanelPayload() {
       "Click **Quiz** below to begin your application.\n\n" +
       "You will enter your **full roleplay name** first (e.g. John Smith → roster name **J. Smith**).\n\n" +
       "The second part requires detailed answers of at least 20 words each.",
-    footer: "Fort Worth Automation",
+    footer: BOT_NAME,
     actionRows: [buildPanelButton()],
   });
 }
@@ -300,8 +307,51 @@ function buildRankSelect(appId) {
   );
 }
 
+function persistApplication(application) {
+  if (!application?.appId) return;
+  applications.set(application.appId, application);
+  saveQuizApplication(application);
+}
+
 function getApplication(appId) {
-  return applications.get(appId) ?? null;
+  if (applications.has(appId)) {
+    return applications.get(appId);
+  }
+
+  const stored = getQuizApplication(appId);
+  if (stored) {
+    applications.set(appId, stored);
+  }
+  return stored ?? null;
+}
+
+async function restoreQuizApplications(client) {
+  for (const application of listQuizApplications({ status: "pending" })) {
+    applications.set(application.appId, application);
+
+    if (!application.messageId || !application.channelId) continue;
+
+    try {
+      const channel = await client.channels.fetch(application.channelId).catch(() => null);
+      const message = await channel?.messages.fetch(application.messageId).catch(() => null);
+
+      if (message) {
+        await message.edit(
+          buildSubmissionPayload(application, {
+            forEdit: true,
+            actionRows: [buildReviewButtons(application.appId)],
+          }),
+        );
+      }
+    } catch (error) {
+      console.warn(`[quiz] Could not restore submission ${application.appId}:`, error.message);
+    }
+  }
+
+  const pendingCount = listQuizApplications({ status: "pending" }).length;
+  if (pendingCount > 0) {
+    console.log(`[quiz] Restored ${pendingCount} pending application(s).`);
+  }
 }
 
 async function handlePanelCommand(message) {
@@ -499,7 +549,7 @@ async function handleInteraction(interaction) {
       status: "pending",
     };
 
-    applications.set(appId, application);
+    persistApplication(application);
     pendingSessions.delete(userId);
 
     const submissionsChannel = await interaction.client.channels
@@ -507,6 +557,7 @@ async function handleInteraction(interaction) {
       .catch(() => null);
 
     if (!submissionsChannel?.isTextBased()) {
+      deleteQuizApplication(appId);
       applications.delete(appId);
       await interaction.editReply(
         "Your application could not be sent because the submissions channel was not found. Contact an admin.",
@@ -520,6 +571,7 @@ async function handleInteraction(interaction) {
         buildSubmissionPayload(application, { actionRows: [buildReviewButtons(appId)] }),
       );
     } catch (sendError) {
+      deleteQuizApplication(appId);
       applications.delete(appId);
       console.error("Failed to send Quiz submission:", sendError);
       await interaction.editReply(
@@ -530,6 +582,7 @@ async function handleInteraction(interaction) {
 
     application.messageId = submissionMessage.id;
     application.channelId = submissionsChannel.id;
+    persistApplication(application);
 
     try {
       await interaction.editReply(
@@ -612,6 +665,11 @@ async function handleInteraction(interaction) {
           reason: "Quiz accepted",
           dmTitle: "Congratulations! Your Quiz application has been **accepted**.",
           dmExtraLines: [`Please read over <#${GUIDE_CHANNEL_ID}> before getting started.`],
+          audit: {
+            client: interaction.client,
+            actor: interaction.member,
+            trigger: "Quiz accepted",
+          },
         });
 
         rosterResult = setup.rosterResult;
@@ -633,6 +691,17 @@ async function handleInteraction(interaction) {
     application.rankLabel = rankLabel;
     application.rankId = roleId;
     application.reviewerTag = interaction.user.tag;
+    persistApplication(application);
+
+    await logRosterAudit(interaction.client, application.guildId, {
+      title: "Quiz application accepted",
+      actor: interaction.member,
+      target: member,
+      roleplayName: application.roleplayName,
+      rank: rankLabel,
+      trigger: "Quiz review",
+      notes: rosterSummary.trim() || undefined,
+    }).catch(() => null);
 
     const channel = await interaction.client.channels.fetch(application.channelId).catch(() => null);
     const message = await channel?.messages.fetch(application.messageId).catch(() => null);
@@ -726,6 +795,16 @@ async function handleInteraction(interaction) {
     application.status = "denied";
     application.denyReason = denyReason;
     application.reviewerTag = interaction.user.tag;
+    persistApplication(application);
+
+    await logRosterAudit(interaction.client, application.guildId, {
+      title: "Quiz application denied",
+      actor: interaction.member,
+      target: await interaction.client.users.fetch(application.userId).catch(() => null),
+      roleplayName: application.roleplayName,
+      trigger: "Quiz review",
+      notes: denyReason,
+    }).catch(() => null);
 
     const channel = await interaction.client.channels.fetch(application.channelId).catch(() => null);
     const message = await channel?.messages.fetch(application.messageId).catch(() => null);
@@ -762,4 +841,5 @@ module.exports = {
   buildPanelButton,
   handlePanelCommand,
   handleInteraction,
+  restoreQuizApplications,
 };

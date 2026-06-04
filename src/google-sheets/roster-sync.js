@@ -239,6 +239,71 @@ async function syncMemberCallsignFromEntry(member, entry, { dmOnChange = true } 
   };
 }
 
+async function resolveMemberSheetEntry(member) {
+  const namedEntries = await getNamedRosterEntries();
+  let sheetEntry = findRosterEntryForMember(namedEntries, member);
+
+  if (!sheetEntry) {
+    const roleplayName = await resolveRoleplayNameForMember(member);
+    if (!roleplayName) {
+      return null;
+    }
+
+    const callsign = getRosterCallsignForMember(member);
+    const sheetEntries = await findRosterEntriesForName(roleplayName, { callsign, member });
+    if (sheetEntries.length === 1) {
+      sheetEntry = sheetEntries[0];
+      recordMemberRosterLink(member, sheetEntry);
+    }
+  }
+
+  return sheetEntry ?? null;
+}
+
+async function revertCallsignDriftFromRoster(member, { dmOnChange = false } = {}) {
+  const { isRoleSyncPaused } = require("../role-sync-guard");
+  if (isRoleSyncPaused(member)) {
+    return { status: "paused" };
+  }
+
+  if (!hasRosterSyncRole(member)) {
+    return { status: "skipped", reason: "Member does not have the department roster role." };
+  }
+
+  const sheetEntry = await resolveMemberSheetEntry(member);
+  if (!sheetEntry) {
+    return { status: "not_on_sheet", reason: "not on roster — use /rosteradd" };
+  }
+
+  const sheetCallsign = formatCallsignForDisplay(sheetEntry.callsign);
+  const discordCallsign = extractDepartmentCallsignFromDisplayName(member.displayName);
+
+  if (discordCallsign && callsignsMatch(sheetEntry.callsign, discordCallsign)) {
+    return { status: "unchanged" };
+  }
+
+  const syncResult = await syncMemberCallsignFromEntry(member, sheetEntry, { dmOnChange });
+
+  if (syncResult.skipped || !syncResult.nicknameResult.ok) {
+    return {
+      status: "failed",
+      error: syncResult.nicknameResult.reason ?? "Could not update nickname.",
+    };
+  }
+
+  if (!syncResult.callsignChanged) {
+    return { status: "unchanged" };
+  }
+
+  const previous = discordCallsign || "(none)";
+  return {
+    status: "reverted",
+    summary: `**${previous}** → **${sheetCallsign}** | ${sheetEntry.name}`,
+    previousCallsign: discordCallsign,
+    sheetCallsign,
+  };
+}
+
 async function fixProbationaryRosterForGuild(guild) {
   const probationaryRank = getProbationaryRankName();
   await safeFetchGuildMembers(guild);
@@ -373,22 +438,7 @@ async function syncMemberRankFromDiscord(member, { dmOnChange = true } = {}) {
     return { status: "no_rank_role" };
   }
 
-  const namedEntries = await getNamedRosterEntries();
-  let sheetEntry = findRosterEntryForMember(namedEntries, member);
-
-  if (!sheetEntry) {
-    const roleplayName = await resolveRoleplayNameForMember(member);
-    if (!roleplayName) {
-      return { status: "not_on_sheet", reason: "not on roster — use /rosteradd" };
-    }
-
-    const callsign = getRosterCallsignForMember(member);
-    const sheetEntries = await findRosterEntriesForName(roleplayName, { callsign, member });
-    if (sheetEntries.length === 1) {
-      sheetEntry = sheetEntries[0];
-      recordMemberRosterLink(member, sheetEntry);
-    }
-  }
+  let sheetEntry = await resolveMemberSheetEntry(member);
 
   if (!sheetEntry) {
     return { status: "not_on_sheet", reason: "not on roster — use /rosteradd" };
@@ -507,6 +557,7 @@ module.exports = {
   linkRosterAccountsFromCallsigns,
   fixProbationaryRosterForGuild,
   refreshCallsignsForGuild,
+  revertCallsignDriftFromRoster,
   getOrderedRanksFromEntries,
   inferMemberRankFromDiscord,
   syncPromotionsFromDiscordForGuild,

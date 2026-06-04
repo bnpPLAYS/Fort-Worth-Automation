@@ -43,7 +43,7 @@ async function buildTranscriptText(channel, ticket, closedBy) {
   const messages = await fetchAllMessages(channel);
 
   const lines = [
-    "Fort Worth Police Department — Ticket Transcript",
+    "Houston Police Department — Ticket Transcript",
     "=".repeat(60),
     `Channel: #${channel.name} (${channel.id})`,
     `Ticket Type: ${ticket.type}`,

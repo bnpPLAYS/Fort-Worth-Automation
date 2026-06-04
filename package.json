@@ -1,7 +1,7 @@
 {
   "name": "fort-worth-automation",
   "version": "1.0.0",
-  "description": "Discord bot for Fort Worth Automation",
+  "description": "Discord bot for Houston Police Automations",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",

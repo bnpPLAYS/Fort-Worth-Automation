@@ -13,6 +13,7 @@ const {
 } = require("./promotion-auth");
 const { validatePromotionRank } = require("./rank-eligibility");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
+const { logRosterResultAudit } = require("./roster-audit-log");
 
 const ROLE_REQUEST_DELETE_MS = 3 * 60 * 1000;
 
@@ -44,7 +45,7 @@ function buildPromotionSuccessPayload(parsed, result, nicknameResult) {
   });
 }
 
-async function runPromotionUpdate({ authorMember, targetMember, parsed, staffBypass }) {
+async function runPromotionUpdate({ client, authorMember, targetMember, parsed, staffBypass }) {
   if (!isSheetsConfigured()) {
     return {
       ok: false,
@@ -85,6 +86,16 @@ async function runPromotionUpdate({ authorMember, targetMember, parsed, staffByp
     );
 
     recordMemberRosterLinkFromResult(memberToUpdate, result);
+
+    if (client && memberToUpdate.guild) {
+      await logRosterResultAudit(client, memberToUpdate.guild.id, {
+        trigger: staffBypass ? "Staff promotion (/database)" : "Promotion channel",
+        actor: authorMember,
+        target: memberToUpdate,
+        roleplayName: parsed.roleplayName,
+        rosterResult: result,
+      }).catch(() => null);
+    }
 
     return { ok: true, result, nicknameResult, memberToUpdate };
   } catch (error) {
@@ -133,6 +144,7 @@ async function handlePromotionMessage(message) {
   const processingMessage = await message.reply("Updating roster in Google Sheets...");
 
   const outcome = await runPromotionUpdate({
+    client: message.client,
     authorMember: message.member,
     targetMember,
     parsed,

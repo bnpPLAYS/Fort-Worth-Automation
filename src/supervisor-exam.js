@@ -25,6 +25,13 @@ const {
 } = require("./google-sheets/roster-assign");
 const { getRosterCallsignForMember } = require("./google-sheets/roster-match");
 const { recordMemberRosterLinkFromResult } = require("./roster-member-link");
+const {
+  getSupervisorExamApplication,
+  saveSupervisorExamApplication,
+  deleteSupervisorExamApplication,
+  listSupervisorExamApplications,
+} = require("./supervisor-exam-store");
+const { logRosterAudit, logRosterResultAudit } = require("./roster-audit-log");
 
 const TYPE_SUPERVISOR_EXAM_ID = "support_type_supervisor_exam";
 const SUPERVISOR_EXAM_BEGIN_ID = "supervisor_exam_begin";
@@ -106,8 +113,51 @@ function canReviewExam(member) {
   );
 }
 
+function persistExamApplication(application) {
+  if (!application?.appId) return;
+  examApplications.set(application.appId, application);
+  saveSupervisorExamApplication(application);
+}
+
 function getExamApplication(appId) {
-  return examApplications.get(appId) ?? null;
+  if (examApplications.has(appId)) {
+    return examApplications.get(appId);
+  }
+
+  const stored = getSupervisorExamApplication(appId);
+  if (stored) {
+    examApplications.set(appId, stored);
+  }
+  return stored ?? null;
+}
+
+async function restoreSupervisorExamApplications(client) {
+  for (const application of listSupervisorExamApplications({ status: "pending" })) {
+    examApplications.set(application.appId, application);
+
+    if (!application.messageId || !application.channelId) continue;
+
+    try {
+      const channel = await client.channels.fetch(application.channelId).catch(() => null);
+      const message = await channel?.messages.fetch(application.messageId).catch(() => null);
+
+      if (message) {
+        await message.edit(
+          buildSubmissionPayload(application, {
+            forEdit: true,
+            actionRows: [buildReviewButtons(application.appId)],
+          }),
+        );
+      }
+    } catch (error) {
+      console.warn(`[supervisor-exam] Could not restore submission ${application.appId}:`, error.message);
+    }
+  }
+
+  const pendingCount = listSupervisorExamApplications({ status: "pending" }).length;
+  if (pendingCount > 0) {
+    console.log(`[supervisor-exam] Restored ${pendingCount} pending exam(s).`);
+  }
 }
 
 function buildExamQuestionsPayload() {
@@ -316,13 +366,14 @@ async function handleSupervisorExamInteraction(interaction) {
       status: "pending",
     };
 
-    examApplications.set(appId, application);
+    persistExamApplication(application);
 
     const submissionsChannel = await interaction.client.channels
       .fetch(SUBMISSION_CHANNEL_ID)
       .catch(() => null);
 
     if (!submissionsChannel?.isTextBased()) {
+      deleteSupervisorExamApplication(appId);
       examApplications.delete(appId);
       await interaction.editReply(
         "Your exam could not be submitted because the submissions channel was not found. Contact an admin.",
@@ -337,7 +388,9 @@ async function handleSupervisorExamInteraction(interaction) {
 
       application.messageId = submissionMessage.id;
       application.channelId = submissionsChannel.id;
+      persistExamApplication(application);
     } catch (error) {
+      deleteSupervisorExamApplication(appId);
       examApplications.delete(appId);
       console.error("Failed to send supervisor exam submission:", error);
       await interaction.editReply(
@@ -387,14 +440,16 @@ async function handleSupervisorExamInteraction(interaction) {
     }
 
     let rosterSummary = "";
+    let rosterResult = null;
     if (member && isSheetsConfigured()) {
       const roleplayName = getRoleplayNameFromMember(member);
       const supervisorRank =
         process.env.GOOGLE_SUPERVISOR_RANK_NAME || GOOGLE_SUPERVISOR_RANK_NAME;
 
       try {
-        const rosterResult = await assignMemberToOpenRank(roleplayName, supervisorRank, {
+        rosterResult = await assignMemberToOpenRank(roleplayName, supervisorRank, {
           currentCallsign: getRosterCallsignForMember(member),
+          member,
         });
         const nicknameResult = await updateMemberCallsign(
           member,
@@ -409,6 +464,14 @@ async function handleSupervisorExamInteraction(interaction) {
         application.rosterCallsign = rosterResult.newCallsign;
         application.rosterRank = rosterResult.newRank;
         recordMemberRosterLinkFromResult(member, rosterResult);
+
+        await logRosterResultAudit(interaction.client, application.guildId, {
+          trigger: "Supervisor exam approved",
+          actor: interaction.member,
+          target: member,
+          roleplayName,
+          rosterResult,
+        }).catch(() => null);
       } catch (error) {
         console.error("Supervisor exam roster assignment failed:", error);
         rosterSummary = `\nRoster assignment failed: ${error.message}`;
@@ -417,6 +480,18 @@ async function handleSupervisorExamInteraction(interaction) {
 
     application.status = "accepted";
     application.reviewerTag = interaction.user.tag;
+    persistExamApplication(application);
+
+    await logRosterAudit(interaction.client, application.guildId, {
+      title: "Supervisor exam approved",
+      actor: interaction.member,
+      target: member,
+      roleplayName: member ? getRoleplayNameFromMember(member) : undefined,
+      rank: application.rosterRank,
+      callsign: application.rosterCallsign,
+      trigger: "Supervisor exam review",
+      notes: rosterSummary.trim() || undefined,
+    }).catch(() => null);
 
     const channel = await interaction.client.channels.fetch(application.channelId).catch(() => null);
     const message = await channel?.messages.fetch(application.messageId).catch(() => null);
@@ -507,6 +582,15 @@ async function handleSupervisorExamInteraction(interaction) {
     application.status = "denied";
     application.denyReason = denyReason;
     application.reviewerTag = interaction.user.tag;
+    persistExamApplication(application);
+
+    await logRosterAudit(interaction.client, application.guildId, {
+      title: "Supervisor exam denied",
+      actor: interaction.member,
+      target: await interaction.client.users.fetch(application.userId).catch(() => null),
+      trigger: "Supervisor exam review",
+      notes: denyReason,
+    }).catch(() => null);
 
     const channel = await interaction.client.channels.fetch(application.channelId).catch(() => null);
     const message = await channel?.messages.fetch(application.messageId).catch(() => null);
@@ -536,4 +620,5 @@ async function handleSupervisorExamInteraction(interaction) {
 module.exports = {
   TYPE_SUPERVISOR_EXAM_ID,
   handleSupervisorExamInteraction,
+  restoreSupervisorExamApplications,
 };

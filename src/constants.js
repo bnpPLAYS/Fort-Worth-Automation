@@ -1,4 +1,6 @@
 module.exports = {
+  /** Bot display name in Discord and panel footers */
+  BOT_NAME: process.env.BOT_NAME?.trim() || "Houston Police Automations",
   EMBED_COLOR: 0x36393f,
   STAFF_PING_ROLE_ID: "1484950025472704643",
   SUPERVISOR_EXAM_ELIGIBILITY_ROLE_ID: "1501804405366718534",

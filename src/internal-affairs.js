@@ -38,6 +38,7 @@ const {
 } = require("./google-sheets/roster-sync");
 const { addInfraction, getInfractionsForUser } = require("./infractions-store");
 const { buildV2Payload } = require("./v2-message");
+const { logRosterAudit, logRosterResultAudit } = require("./roster-audit-log");
 
 const INFRACTION_COMMAND = "infraction";
 const INFO_COMMAND = "info";
@@ -354,6 +355,15 @@ async function handleInfractionCommand(interaction) {
           rosterResult.roleplayName,
         );
         recordMemberRosterLinkFromResult(targetMember, rosterResult);
+
+        await logRosterResultAudit(interaction.client, interaction.guild.id, {
+          trigger: "IA demotion (/infraction)",
+          actor: interaction.member,
+          target: targetMember,
+          roleplayName,
+          rosterResult,
+          notes: reason,
+        }).catch(() => null);
       } else {
         const clearedCount = await clearRosterForName(roleplayName, { currentCallsign });
         rosterResult = { cleared: true, clearedCount, roleplayName };
@@ -363,6 +373,15 @@ async function handleInfractionCommand(interaction) {
         if (clearedCount === 0) {
           rosterResult.notOnSheet = true;
         }
+
+        await logRosterAudit(interaction.client, interaction.guild.id, {
+          title: "IA termination — roster cleared",
+          actor: interaction.member,
+          target: targetMember,
+          roleplayName,
+          trigger: "IA termination (/infraction)",
+          notes: `${reason}\nCleared ${clearedCount} roster row(s).`,
+        }).catch(() => null);
       }
     }
 

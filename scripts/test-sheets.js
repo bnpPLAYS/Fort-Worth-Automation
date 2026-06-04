@@ -18,7 +18,7 @@ async function main() {
       "./credentials/google-service-account.json",
   );
 
-  console.log("Fort Worth roster — Google Sheets test\n");
+  console.log("Houston Police roster — Google Sheets test\n");
   console.log("Spreadsheet ID:", spreadsheetId || "(missing)");
   console.log("Tab name:", sheetName);
   console.log("Credentials:", credentialsPath);

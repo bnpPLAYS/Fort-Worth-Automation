@@ -191,6 +191,7 @@ async function handleDatabaseCommand(interaction) {
   await interaction.deferReply({ ephemeral: false });
 
   const outcome = await runPromotionUpdate({
+    client: interaction.client,
     authorMember: interaction.member,
     targetMember,
     parsed,

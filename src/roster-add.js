@@ -232,7 +232,12 @@ async function handleRosterAddCommand(interaction) {
       useCadetCallsign: rankConfig.useCadetCallsign,
       isCadet: rankConfig.useCadetCallsign,
       reason: "Roster add",
-      dmTitle: "You have been added to the **Fort Worth Police Department** roster.",
+      dmTitle: "You have been added to the **Houston Police Department** roster.",
+      audit: {
+        client: interaction.client,
+        actor: interaction.member,
+        trigger: "/rosteradd",
+      },
     });
 
     const callsign = setup.callsign;

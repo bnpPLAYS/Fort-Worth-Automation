@@ -2,6 +2,7 @@ const { Events } = require("discord.js");
 const { isSheetsConfigured } = require("./google-sheets/client");
 const {
   syncMemberRankFromDiscord,
+  revertCallsignDriftFromRoster,
   getOrderedRanksFromEntries,
   safeFetchGuildMembers,
 } = require("./google-sheets/roster-sync");
@@ -14,6 +15,7 @@ const {
   REORGANIZE_VERSION,
 } = require("./google-sheets/roster-reorganize");
 const { pauseRoleSyncForMember, pauseRoleSyncGlobally, isRoleSyncPaused } = require("./role-sync-guard");
+const { logRosterAudit } = require("./roster-audit-log");
 
 const ROLE_SYNC_INTERVAL_MS = Number.parseInt(process.env.ROLE_SYNC_INTERVAL_MS || "300000", 10);
 const { MEMBER_ROSTER_ROLE_IDS, ROSTER_SYNC_ROLE_ID } = require("./constants");
@@ -41,7 +43,41 @@ function getMemberRankFingerprint(member, orderedRanks) {
   return roleIds.join(",");
 }
 
-async function syncMemberIfRankChanged(member, orderedRanks, { reason = "scheduled" } = {}) {
+async function auditCallsignRevert(client, member, outcome, reason) {
+  if (!client || !member || outcome?.status !== "reverted") return;
+
+  await logRosterAudit(client, member.guild.id, {
+    title: "Callsign revert — nickname did not match roster",
+    target: member,
+    callsign: outcome.sheetCallsign,
+    trigger: reason,
+    notes: outcome.summary,
+  }).catch(() => null);
+}
+
+async function guardMemberCallsignDrift(client, member, { reason = "callsign_drift" } = {}) {
+  const outcome = await revertCallsignDriftFromRoster(member, { dmOnChange: false });
+
+  if (outcome.status === "reverted") {
+    console.log(`[callsign-guard] ${member.displayName}: ${outcome.summary}`);
+    await auditCallsignRevert(client, member, outcome, reason);
+  }
+
+  return outcome;
+}
+
+async function auditRoleSyncUpdate(client, member, outcome, reason) {
+  if (!client || !member || outcome?.status !== "updated") return;
+
+  await logRosterAudit(client, member.guild.id, {
+    title: "Role sync — roster updated",
+    target: member,
+    trigger: reason,
+    notes: outcome.summary,
+  }).catch(() => null);
+}
+
+async function syncMemberIfRankChanged(client, member, orderedRanks, { reason = "scheduled" } = {}) {
   if (isRoleSyncPaused(member)) {
     return { status: "paused" };
   }
@@ -59,6 +95,7 @@ async function syncMemberIfRankChanged(member, orderedRanks, { reason = "schedul
   }
 
   const result = await syncMemberRankFromDiscord(member, { dmOnChange: true, reason });
+  await auditRoleSyncUpdate(client, member, result, reason);
   return result;
 }
 
@@ -82,7 +119,13 @@ async function runRoleSyncPass(client, { reason = "scheduled" } = {}) {
         if (!hasRosterSyncRole(member)) continue;
 
         checked += 1;
-        const outcome = await syncMemberIfRankChanged(member, orderedRanks, { reason });
+
+        const drift = await guardMemberCallsignDrift(client, member, { reason: "interval" });
+        if (drift.status === "reverted") {
+          updated += 1;
+        }
+
+        const outcome = await syncMemberIfRankChanged(client, member, orderedRanks, { reason });
 
         if (outcome.status === "updated") {
           updated += 1;
@@ -152,20 +195,30 @@ function startRoleSyncScheduler(client) {
   }, ROLE_SYNC_INTERVAL_MS);
 
   console.log(
-    `[role-sync] Watching Discord rank roles every ${Math.round(ROLE_SYNC_INTERVAL_MS / 60000)} minute(s).`,
+    `[role-sync] Watching Discord rank roles and nickname callsigns every ${Math.round(ROLE_SYNC_INTERVAL_MS / 60000)} minute(s).`,
   );
 }
 
 function registerRoleSyncHandlers(client) {
   client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
     if (!isSheetsConfigured()) return;
-    if (oldMember.roles.cache.equals(newMember.roles.cache)) return;
-    if (!hasRosterSyncRole(newMember) && !hasRosterSyncRole(oldMember)) return;
+    if (!hasRosterSyncRole(newMember)) return;
+
+    const nicknameChanged = oldMember.displayName !== newMember.displayName;
+    const rolesChanged = !oldMember.roles.cache.equals(newMember.roles.cache);
+
+    if (!nicknameChanged && !rolesChanged) return;
 
     try {
+      if (nicknameChanged) {
+        await guardMemberCallsignDrift(client, newMember, { reason: "nickname_change" });
+      }
+
+      if (!rolesChanged) return;
+
       const { entries } = await getRosterRows();
       const orderedRanks = getOrderedRanksFromEntries(entries);
-      const outcome = await syncMemberIfRankChanged(newMember, orderedRanks, {
+      const outcome = await syncMemberIfRankChanged(client, newMember, orderedRanks, {
         reason: "member_update",
       });
 

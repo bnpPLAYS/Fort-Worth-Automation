@@ -12,6 +12,7 @@ const { assignMemberRosterRoles, sendCallsignDm } = require("./member-roster");
 const { updateMemberCallsign } = require("./discord-callsign");
 
 const { pauseRoleSyncForMember, pauseRoleSyncGlobally } = require("./role-sync-guard");
+const { logRosterResultAudit } = require("./roster-audit-log");
 
 async function refreshMemberAfterRoles(member, reason) {
   await assignMemberRosterRoles(member, reason);
@@ -91,6 +92,17 @@ async function completeMemberRosterSetup(member, options) {
   }
 
   recordMemberRosterLinkFromResult(rosterMember, rosterResult);
+
+  if (options.audit?.client) {
+    await logRosterResultAudit(options.audit.client, rosterMember.guild.id, {
+      trigger: options.audit.trigger ?? reason,
+      actor: options.audit.actor,
+      target: rosterMember,
+      roleplayName,
+      rosterResult,
+      notes: options.audit.notes,
+    }).catch(() => null);
+  }
 
   return {
     member: rosterMember,

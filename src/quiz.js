@@ -23,6 +23,10 @@ const {
   listQuizApplications,
 } = require("./quiz-applications-store");
 const { logRosterAudit } = require("./roster-audit-log");
+const {
+  isBlockedFromRecruitmentFlows,
+  RECRUITMENT_BLOCKED_MESSAGE,
+} = require("./member-roster");
 
 const PANEL_COMMAND = "-panelquiz";
 const LEGACY_PANEL_COMMAND = "-panelfastpass";
@@ -403,6 +407,11 @@ async function handleInteraction(interaction) {
     interaction.isButton() &&
     (interaction.customId === BUTTON_CUSTOM_ID || interaction.customId === LEGACY_BUTTON_CUSTOM_ID)
   ) {
+    if (isBlockedFromRecruitmentFlows(interaction.member)) {
+      await interaction.reply({ content: RECRUITMENT_BLOCKED_MESSAGE, ephemeral: true });
+      return true;
+    }
+
     if (isOnCooldown(interaction.user.id)) {
       const cooldownEnd = getCooldownEnd(interaction.user.id);
       await interaction.reply({
@@ -423,6 +432,11 @@ async function handleInteraction(interaction) {
   }
 
   if (interaction.isModalSubmit() && interaction.customId === MODAL_STAGE_ONE_ID) {
+    if (isBlockedFromRecruitmentFlows(interaction.member)) {
+      await interaction.reply({ content: RECRUITMENT_BLOCKED_MESSAGE, ephemeral: true });
+      return true;
+    }
+
     const session = pendingSessions.get(interaction.user.id);
     if (!session) {
       await interaction.reply({
@@ -495,6 +509,12 @@ async function handleInteraction(interaction) {
     const userId = interaction.customId.slice(MODAL_STAGE_TWO_PREFIX.length);
     if (interaction.user.id !== userId) {
       await interaction.reply({ content: "This form is not for you.", ephemeral: true });
+      return true;
+    }
+
+    if (isBlockedFromRecruitmentFlows(interaction.member)) {
+      await interaction.reply({ content: RECRUITMENT_BLOCKED_MESSAGE, ephemeral: true });
+      pendingSessions.delete(userId);
       return true;
     }
 

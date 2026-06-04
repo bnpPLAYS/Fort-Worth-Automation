@@ -189,15 +189,18 @@ async function destroyVoiceSession(connection, player) {
   }
 }
 
-function waitForUserToFinishSpeaking(connection, userId, { timeoutMs = 180_000, minSpeechMs = 800 } = {}) {
+function waitForUserToFinishSpeaking(
+  connection,
+  userId,
+  { timeoutMs = 180_000, minSpeechMs = 800, silenceAfterMs = 0 } = {},
+) {
   return new Promise((resolve) => {
     const receiver = connection.receiver;
     let spoke = false;
     let speechStartedAt = 0;
-    let timedOut = false;
+    let silenceTimer = null;
 
     const timeout = setTimeout(() => {
-      timedOut = true;
       cleanup();
       resolve({ spoke: false, timedOut: true });
     }, timeoutMs);
@@ -206,17 +209,32 @@ function waitForUserToFinishSpeaking(connection, userId, { timeoutMs = 180_000, 
       if (id !== userId) return;
       spoke = true;
       speechStartedAt = Date.now();
+      if (silenceTimer) {
+        clearTimeout(silenceTimer);
+        silenceTimer = null;
+      }
     }
 
     function onEnd(id) {
       if (id !== userId || !spoke) return;
       if (Date.now() - speechStartedAt < minSpeechMs) return;
-      cleanup();
-      resolve({ spoke: true, timedOut: false });
+
+      if (silenceAfterMs <= 0) {
+        cleanup();
+        resolve({ spoke: true, timedOut: false });
+        return;
+      }
+
+      if (silenceTimer) clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        cleanup();
+        resolve({ spoke: true, timedOut: false });
+      }, silenceAfterMs);
     }
 
     function cleanup() {
       clearTimeout(timeout);
+      if (silenceTimer) clearTimeout(silenceTimer);
       receiver.speaking.removeListener("start", onStart);
       receiver.speaking.removeListener("end", onEnd);
     }

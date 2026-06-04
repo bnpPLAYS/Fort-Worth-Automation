@@ -46,6 +46,10 @@ const {
   moveMemberToInterviewChannel,
   deleteInterviewVoiceChannel,
 } = require("./interview-voice-channel");
+const {
+  isBlockedFromRecruitmentFlows,
+  RECRUITMENT_BLOCKED_MESSAGE,
+} = require("./member-roster");
 
 const INTERVIEW_COMMAND = "-interview";
 const INTERVIEW_CLEAR_COMMAND = "-clearinterview";
@@ -74,6 +78,8 @@ const GUIDE_CHANNEL_ID = "1484990957299564666";
 const DEFAULT_SUBMISSIONS_CHANNEL_ID = "1507976263141163008";
 const MIC_WARNING_TEXT =
   "Please ensure you are near your microphone so we can understand you.";
+/** Silence after the applicant stops speaking before showing Continue. */
+const ANSWER_SILENCE_MS = 5000;
 
 const QUESTIONS = [
   "How active are you on the server weekly?",
@@ -146,6 +152,10 @@ async function assertIntervieweeInQueueVoice(interviewee) {
 }
 
 async function assertIntervieweeCanStart(guild, interviewee, { checkQueueVoice = false } = {}) {
+  if (isBlockedFromRecruitmentFlows(interviewee)) {
+    throw new Error(RECRUITMENT_BLOCKED_MESSAGE);
+  }
+
   if (isIntervieweeInActiveSession(guild.id, interviewee.id)) {
     throw new Error("You already have a voice interview in progress in this server.");
   }
@@ -562,7 +572,7 @@ async function replyInterviewFailure(interaction, description, { session } = {})
 
 function formatAnswerPanelDescription(session) {
   return (
-    `<@${session.intervieweeId}> Answer the question in voice, then click **Continue** when you are done.\n\n` +
+    `<@${session.intervieweeId}> Click **Continue** when you are ready for the next question.\n\n` +
     "**Continue** — next question · **Add Note** — type extra info · **Repeat Question** · **Discontinue** — end early"
   );
 }
@@ -784,7 +794,8 @@ async function runQuestion(client, session) {
   session.waitingForSpeech = true;
 
   await updateInterviewStatusMessage(client, session, {
-    description: `<@${session.intervieweeId}> Listen in voice and answer clearly.`,
+    description:
+      `<@${session.intervieweeId}> Answer in voice. **Continue** appears after you stop talking for **5 seconds**.`,
     statusNote: `**Question ${questionNumber}:** ${question}`,
     actionRows: [],
   }).catch(() => null);
@@ -801,15 +812,23 @@ async function runQuestion(client, session) {
 
   if (session.cancelled) return;
 
+  const answerResult = await waitForInterviewAnswer(session, {
+    timeoutMs: 180_000,
+    silenceAfterMs: ANSWER_SILENCE_MS,
+  });
+
+  if (session.cancelled) return;
+
   session.waitingForSpeech = false;
-  session.lastAnswerHadVoice = true;
+  session.lastAnswerHadVoice = answerResult.spoke;
 
   await postAnswerControlPanel(client, session);
 }
 
-async function waitForInterviewAnswer(session, { timeoutMs = 90_000 } = {}) {
+async function waitForInterviewAnswer(session, { timeoutMs = 90_000, silenceAfterMs = 0 } = {}) {
   let result = await waitForUserToFinishSpeaking(session.connection, session.intervieweeId, {
     timeoutMs,
+    silenceAfterMs,
   });
 
   if (!result.spoke) {
@@ -821,6 +840,7 @@ async function waitForInterviewAnswer(session, { timeoutMs = 90_000 } = {}) {
 
     result = await waitForUserToFinishSpeaking(session.connection, session.intervieweeId, {
       timeoutMs: Math.min(timeoutMs, 60_000),
+      silenceAfterMs,
     });
   }
 

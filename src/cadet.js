@@ -15,7 +15,12 @@ const { buildV2Payload, buildV2EditPayload } = require("./v2-message");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { isOnCooldown, setCooldown, getCooldownRemainingMs } = require("./cooldowns");
 const { getRoleplayNameFromMember, updateMemberCallsign } = require("./discord-callsign");
-const { assignMemberRosterRoles, sendCallsignDm } = require("./member-roster");
+const {
+  assignMemberRosterRoles,
+  sendCallsignDm,
+  isBlockedFromRecruitmentFlows,
+  RECRUITMENT_BLOCKED_MESSAGE,
+} = require("./member-roster");
 const { pauseRoleSyncForMember, pauseRoleSyncGlobally } = require("./role-sync-guard");
 const { formatRoleplayInitials } = require("./roleplay-name");
 const {
@@ -751,6 +756,11 @@ async function handleCadetInteraction(interaction) {
       return true;
     }
 
+    if (isBlockedFromRecruitmentFlows(member)) {
+      await interaction.reply({ content: RECRUITMENT_BLOCKED_MESSAGE, ephemeral: true });
+      return true;
+    }
+
     if (isOnCooldown(member.id, CADET_ENROLL_COOLDOWN_TYPE)) {
       const remainingMs = getCooldownRemainingMs(member.id, CADET_ENROLL_COOLDOWN_TYPE);
       await interaction.reply({
@@ -775,6 +785,11 @@ async function handleCadetInteraction(interaction) {
   }
 
   await interaction.deferReply({ ephemeral: true });
+
+  if (isBlockedFromRecruitmentFlows(member)) {
+    await interaction.editReply(RECRUITMENT_BLOCKED_MESSAGE);
+    return true;
+  }
 
   if (isOnCooldown(member.id, CADET_ENROLL_COOLDOWN_TYPE)) {
     const remainingMs = getCooldownRemainingMs(member.id, CADET_ENROLL_COOLDOWN_TYPE);

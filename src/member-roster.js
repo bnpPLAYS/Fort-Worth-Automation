@@ -77,9 +77,19 @@ function hasRosterSyncRole(member) {
   return member.roles?.cache?.has(ROSTER_SYNC_ROLE_ID) ?? false;
 }
 
+const RECRUITMENT_BLOCKED_MESSAGE =
+  "You are already on the department roster and cannot use **Become Cadet**, **Quiz**, or **Voice Interview**.";
+
+/** Applicants only — members with the roster sync role are already on the sheet. */
+function isBlockedFromRecruitmentFlows(member) {
+  return hasRosterSyncRole(member);
+}
+
 module.exports = {
   assignMemberRosterRoles,
   sendCallsignDm,
   mergeRoleIds,
   hasRosterSyncRole,
+  isBlockedFromRecruitmentFlows,
+  RECRUITMENT_BLOCKED_MESSAGE,
 };

@@ -1,19 +1,22 @@
-const { PROBATIONARY_OFFICER_ROLE_ID, MEMBER_ROSTER_ROLE_IDS } = require("./constants");
+const {
+  PROBATIONARY_OFFICER_ROLE_ID,
+  MEMBER_ROSTER_ROLE_IDS,
+  CADET_DISCORD_ROLE_ID,
+  CADET_ENROLL_ROLE_IDS,
+} = require("./constants");
 const { ranksMatch } = require("./rank-matching");
 const { isCadetSheetRank } = require("./google-sheets/roster-ranks");
 const { mergeRoleIds } = require("./member-roster");
 
-const CADET_ROLE_IDS = mergeRoleIds(
-  ["1495414411840454676", "1484951786623205516"],
-  MEMBER_ROSTER_ROLE_IDS,
-);
+/** Cadet rank role only — removed when promoting off the cadet track */
+const CADET_ROLE_IDS = [CADET_DISCORD_ROLE_ID];
 
 /** Discord role + sheet rank label pairs used by Quiz and /rosteradd */
 const RANK_OPTIONS = [
   {
     id: "cadet",
     label: "Cadet",
-    discordRoleIds: CADET_ROLE_IDS,
+    discordRoleIds: CADET_ENROLL_ROLE_IDS,
     useCadetCallsign: true,
   },
   {
@@ -127,7 +130,9 @@ async function assignRankRolesToMember(member, rankValue, reason = "Rank assignm
     }
   }
 
-  const roleIds = mergeRoleIds(discordRoleIds, MEMBER_ROSTER_ROLE_IDS);
+  const roleIds = useCadetCallsign
+    ? mergeRoleIds(discordRoleIds)
+    : mergeRoleIds(discordRoleIds, MEMBER_ROSTER_ROLE_IDS);
   const toAdd = roleIds.filter((roleId) => !member.roles.cache.has(roleId));
   if (toAdd.length === 0) {
     return { added: [], failed: [] };
@@ -144,6 +149,7 @@ async function assignRankRolesToMember(member, rankValue, reason = "Rank assignm
 
 module.exports = {
   CADET_ROLE_IDS,
+  CADET_ENROLL_ROLE_IDS,
   RANK_OPTIONS,
   getRankOptionById,
   getRankOptionByLabel,

@@ -64,7 +64,7 @@ const CADET_ENROLL_MODAL_ID = "cadet_enroll_modal";
 const RIDEALONG_COMMAND_NAME = "ridealong";
 const RIDEALONG_MODAL_ID = "ridealong_modal";
 
-const { CADET_ROLE_IDS } = require("./rank-options");
+const { CADET_ROLE_IDS, CADET_ENROLL_ROLE_IDS } = require("./rank-options");
 
 /** Cadets use /ridealong here; request posts appear in this channel */
 const RA_REQUEST_CHANNEL_ID = "1501730869961031770";
@@ -809,15 +809,16 @@ async function handleCadetInteraction(interaction) {
     return true;
   }
 
-  const rolesToAdd = CADET_ROLE_IDS.filter((roleId) => !member.roles.cache.has(roleId));
+  pauseRoleSyncGlobally(45_000);
+  pauseRoleSyncForMember(member, 120_000);
+
+  const rolesToAdd = CADET_ENROLL_ROLE_IDS.filter((roleId) => !member.roles.cache.has(roleId));
 
   if (rolesToAdd.length > 0) {
     await member.roles.add(rolesToAdd, "Become Cadet").catch((error) => {
       console.error("Failed to assign cadet roles:", error);
     });
   }
-
-  await assignMemberRosterRoles(member, "Become Cadet");
 
   let reply =
     `You have been enrolled as a **Cadet** and received your cadet roles.\n\n` +

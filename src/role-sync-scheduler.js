@@ -16,6 +16,7 @@ const {
 } = require("./google-sheets/roster-reorganize");
 const { pauseRoleSyncForMember, pauseRoleSyncGlobally, isRoleSyncPaused } = require("./role-sync-guard");
 const { logRosterAudit } = require("./roster-audit-log");
+const { processMemberRosterRemoval } = require("./roster-removal");
 
 const ROLE_SYNC_INTERVAL_MS = Number.parseInt(process.env.ROLE_SYNC_INTERVAL_MS || "300000", 10);
 const { MEMBER_ROSTER_ROLE_IDS, ROSTER_SYNC_ROLE_ID } = require("./constants");
@@ -213,7 +214,6 @@ function startRoleSyncScheduler(client) {
 function registerRoleSyncHandlers(client) {
   client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
     if (!isSheetsConfigured()) return;
-    if (!hasRosterSyncRole(newMember)) return;
 
     const nicknameChanged = oldMember.displayName !== newMember.displayName;
     const rolesChanged = !oldMember.roles.cache.equals(newMember.roles.cache);
@@ -222,6 +222,50 @@ function registerRoleSyncHandlers(client) {
 
     try {
       const { entries } = await getRosterRows();
+      const orderedRanks = getOrderedRanksFromEntries(entries);
+      const hadRosterSync = hasRosterSyncRole(oldMember);
+      const hasRosterSync = hasRosterSyncRole(newMember);
+
+      if (rolesChanged && hadRosterSync && !hasRosterSync) {
+        const outcome = await processMemberRosterRemoval(client, newMember, {
+          reason: "Discord roster sync role removed",
+          entries,
+          identityMember: oldMember,
+        });
+
+        if (outcome.status === "removed") {
+          memberRankFingerprints.delete(newMember.id);
+          console.log(
+            `[role-sync] ${newMember.displayName}: roster cleared after roster sync role removal`,
+          );
+        }
+
+        return;
+      }
+
+      if (rolesChanged && hasRosterSync) {
+        const oldFingerprint = getMemberRankFingerprint(oldMember, orderedRanks);
+        const newFingerprint = getMemberRankFingerprint(newMember, orderedRanks);
+
+        if (oldFingerprint && !newFingerprint) {
+          const outcome = await processMemberRosterRemoval(client, newMember, {
+            reason: "Discord rank roles removed",
+            entries,
+            identityMember: oldMember,
+          });
+
+          if (outcome.status === "removed") {
+            memberRankFingerprints.delete(newMember.id);
+            console.log(
+              `[role-sync] ${newMember.displayName}: roster cleared after rank roles removed`,
+            );
+          }
+
+          return;
+        }
+      }
+
+      if (!hasRosterSync) return;
 
       if (nicknameChanged) {
         await guardMemberCallsignDrift(client, newMember, { reason: "nickname_change", entries });
@@ -229,7 +273,6 @@ function registerRoleSyncHandlers(client) {
 
       if (!rolesChanged) return;
 
-      const orderedRanks = getOrderedRanksFromEntries(entries);
       const outcome = await syncMemberIfRankChanged(client, newMember, orderedRanks, {
         reason: "member_update",
         entries,

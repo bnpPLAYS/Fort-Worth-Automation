@@ -443,11 +443,18 @@ async function handleSupportInteraction(interaction) {
         interaction,
       });
     } catch (error) {
-      await interaction.update({
-        content: error.message ?? "Could not start the voice interview.",
-        embeds: [],
-        components: [buildInterviewPanelButton()],
-      }).catch(() => null);
+      await interaction
+        .update({
+          content: error.message ?? "Could not start the voice interview.",
+          embeds: [],
+          components: [buildInterviewPanelButton()],
+        })
+        .catch(() =>
+          interaction.reply({
+            content: error.message ?? "Could not start the voice interview.",
+            ephemeral: true,
+          }),
+        );
     }
 
     return true;

@@ -69,6 +69,11 @@ const MODAL_DENY_PREFIX = "voice_interview_deny_modal:";
 const MODAL_ROLEPLAY_PREFIX = "interview_roleplay_modal:";
 const INTERVIEW_START_PREFIX = "interview_start:";
 const INTERVIEW_DASHBOARD_BUTTON_ID = "interview_apply";
+const INTERVIEW_SUPPORT_BUTTON_ID = "support_type_interview";
+const SELF_SERVE_INTERVIEW_ENTRY_IDS = new Set([
+  INTERVIEW_DASHBOARD_BUTTON_ID,
+  INTERVIEW_SUPPORT_BUTTON_ID,
+]);
 const INTERVIEW_COOLDOWN_TYPE = "interview";
 const INTERVIEW_QUEUE_GUILD_ID = "1484948320534265879";
 const INTERVIEW_QUEUE_VOICE_CHANNEL_ID = "1495604479070961694";
@@ -246,7 +251,8 @@ async function promptInterviewRoleplayName(client, { guild, textChannel, hostMem
   if (
     interaction &&
     interaction.user.id === interviewee.id &&
-    (interaction.isChatInputCommand() || interaction.customId === INTERVIEW_DASHBOARD_BUTTON_ID)
+    (interaction.isChatInputCommand() ||
+      (interaction.isButton() && SELF_SERVE_INTERVIEW_ENTRY_IDS.has(interaction.customId)))
   ) {
     await interaction.showModal(buildRoleplayNameModal(guild.id, interviewee.id));
     return;

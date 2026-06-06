@@ -5,6 +5,7 @@ const {
   ChannelType,
   ModalBuilder,
   PermissionFlagsBits,
+  SectionBuilder,
   SeparatorBuilder,
   TextDisplayBuilder,
   TextInputBuilder,
@@ -19,6 +20,7 @@ const { closeTicket } = require("./transcripts");
 const { getErrorMessage } = require("./embed-utils");
 const { TYPE_SUPERVISOR_EXAM_ID, handleSupervisorExamInteraction } = require("./supervisor-exam");
 const { buildV2Payload } = require("./v2-message");
+const { HPD_EMOJI } = require("./constants");
 const {
   createHpdContainer,
   appendHpdFooter,
@@ -152,25 +154,65 @@ function buildStaffPanelPayload() {
   });
 }
 
-function buildAssistanceHubContent() {
+const ASSISTANCE_OPTIONS = [
+  {
+    emoji: "🎫",
+    title: "Other",
+    description: "General questions, help, or issues that do not fit another category.",
+  },
+  {
+    emoji: "📝",
+    title: "Quiz",
+    description: "Start the department quiz / fast-track application.",
+  },
+  {
+    emoji: "🎙️",
+    title: "Voice Interview",
+    description: "Apply through the voice interview process (join the waiting VC first).",
+  },
+  {
+    emoji: "⚠️",
+    title: "Report",
+    description: "Report a member or officer to Internal Affairs.",
+  },
+  {
+    emoji: "⭐",
+    title: "Supervisor Exam",
+    description: "Supervisor promotion exam for eligible personnel.",
+  },
+];
+
+function buildAssistanceIntroContent() {
   return (
-    "## Houston Police Department — Assistance Hub\n\n" +
-    "Click **Contact Support** below to open a ticket or application.\n\n" +
-    "**Available options:**\n" +
-    "• **Other** — General support tickets\n" +
-    "• **Quiz** — Department quiz application\n" +
-    "• **Voice Interview** — Voice interview application\n" +
-    "• **Report** — Report a member or officer\n" +
-    "• **Supervisor Exam** — Supervisor promotion exam"
+    `## ${HPD_EMOJI} Houston Police Department\n` +
+    "### Assistance Hub\n\n" +
+    "> **Service with Respect, Dedicated to Protect.**\n\n" +
+    "Welcome to the **Assistance Hub**. Click **Contact Support** below, choose the option that fits your request, and follow the prompts.\n\n" +
+    "*Please remain patient — ticket staff are volunteers and will respond as soon as they can.*"
+  );
+}
+
+function buildAssistanceOptionSection(option) {
+  return new SectionBuilder().addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `${option.emoji} **${option.title}**\n-# ${option.description}`,
+    ),
   );
 }
 
 function buildAssistanceHubPayload() {
   const { container, files } = createHpdContainer();
 
+  container.addTextDisplayComponents(new TextDisplayBuilder().setContent(buildAssistanceIntroContent()));
+  container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
   container.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(buildAssistanceHubContent()),
+    new TextDisplayBuilder().setContent("### Available Options"),
   );
+
+  for (const option of ASSISTANCE_OPTIONS) {
+    container.addSectionComponents(buildAssistanceOptionSection(option));
+  }
+
   container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
   container.addActionRowComponents(buildContactSupportButton());
   appendHpdFooter(container, files);
@@ -183,7 +225,7 @@ function buildContactSupportButton() {
     new ButtonBuilder()
       .setCustomId(CONTACT_BUTTON_ID)
       .setLabel("Contact Support")
-      .setStyle(ButtonStyle.Danger),
+      .setStyle(ButtonStyle.Primary),
   );
 }
 

@@ -66,6 +66,11 @@ const RIDEALONG_MODAL_ID = "ridealong_modal";
 const { applyCadetEnrollmentRoles } = require("./cadet-enroll-roles");
 const { CADET_ROLE_IDS } = require("./rank-options");
 const { scanCadetDutyState } = require("./cadet-duty-guard");
+const {
+  recordCadetEnrollment,
+  markCadetRideAlongRequested,
+  clearCadetInactivityRecord,
+} = require("./cadet-inactivity");
 
 /** Cadets use /ridealong here; request posts appear in this channel */
 const RA_REQUEST_CHANNEL_ID = "1501730869961031770";
@@ -624,6 +629,8 @@ async function executeRideAlongPass(interaction, request, applicant, score) {
   recordMemberRosterLinkFromResult(applicant, rosterResult);
 
   await interaction.editReply(`Marked **Passed** for ${applicant}.\n${staffNote}`);
+
+  clearCadetInactivityRecord(applicant.id);
 }
 
 async function executeRideAlongFail(interaction, request, applicant, score) {
@@ -683,6 +690,8 @@ async function executeRideAlongFail(interaction, request, applicant, score) {
     `Marked **Failed** for ${applicant} (score **${score}/10** — below **${RIDEALONG_PASSING_SCORE}**).\n` +
       "They cannot re-enroll as cadet for 3 days.",
   );
+
+  clearCadetInactivityRecord(applicant.id);
 }
 
 function buildCadetPanelPayload() {
@@ -692,6 +701,7 @@ function buildCadetPanelPayload() {
       "Click the button below to receive your **Cadet** roles and begin the ride-along process.\n\n" +
       "You will be asked for your **full roleplay name** (e.g. John Smith). The roster will list you as **J. Smith**.\n\n" +
       "After enrolling, you must complete **2 ride-alongs** before you can become a **Probationary Officer**.\n\n" +
+      "Submit a **/ridealong** request within **7 days** of enrolling or you will be terminated for inactivity.\n\n" +
       `When you are ready, go to <#${RA_REQUEST_CHANNEL_ID}> and run **/ridealong** to request a ride-along.`,
     footer: BOT_NAME,
     actionRows: [buildCadetEnrollButton()],
@@ -864,6 +874,7 @@ async function handleCadetInteraction(interaction) {
     `You have been enrolled as a **Cadet** and received your cadet roles.\n\n` +
     `Your roster name is **${roleplayName}** (from *${roleplayNameRaw}*).\n\n` +
     "You must complete **2 ride-alongs** before you can become a **Probationary Officer**.\n\n" +
+    "Submit a **/ridealong** request within **7 days** of enrolling or you will be terminated for inactivity.\n\n" +
     `When you are ready, go to <#${RA_REQUEST_CHANNEL_ID}> and run **/ridealong** to request a ride-along.`;
 
   if (cadetAssignment) {
@@ -909,6 +920,11 @@ async function handleCadetInteraction(interaction) {
   }
 
   await interaction.editReply({ content: reply });
+
+  recordCadetEnrollment(member.id, {
+    guildId: interaction.guild.id,
+    roleplayName,
+  });
 
   scanCadetDutyState(await member.fetch().catch(() => member));
 
@@ -1050,6 +1066,8 @@ async function submitRideAlongRequest(client, { guild, member, robloxUser, disco
   request.notificationMessageId = notificationMessage.id;
   request.notificationChannelId = notificationMessage.channel.id;
   persistRideAlongRequest(request);
+
+  markCadetRideAlongRequested(member.id);
 
   return {
     ok: true,

@@ -41,4 +41,6 @@ module.exports = {
   GOOGLE_PROBATIONARY_RANK_NAME: "Probationary Officer",
   GOOGLE_SUPERVISOR_RANK_NAME: "Corporal",
   CADET_ENROLL_COOLDOWN_MS: 3 * 24 * 60 * 60 * 1000,
+  /** Cadets must submit /ridealong within this window after enrolling */
+  CADET_INACTIVITY_MS: 7 * 24 * 60 * 60 * 1000,
 };

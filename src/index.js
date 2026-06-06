@@ -55,6 +55,7 @@ const {
   registerRoleSyncHandlers,
 } = require("./role-sync-scheduler");
 const { registerCadetDutyGuard } = require("./cadet-duty-guard");
+const { startCadetInactivityScheduler } = require("./cadet-inactivity");
 const { restoreSupervisorExamApplications } = require("./supervisor-exam");
 const { buildSetupAuditLogCommand, handleSetupAuditLogCommand } = require("./audit-setup");
 const { buildRosterLayoutCommand, handleRosterLayoutCommand } = require("./roster-layout-command");
@@ -159,6 +160,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   restoreSupervisorExamApplications(readyClient);
   registerRoleSyncHandlers(readyClient);
   registerCadetDutyGuard(readyClient);
+  startCadetInactivityScheduler(readyClient);
   registerInterviewVoiceHandlers(readyClient);
   startRoleSyncScheduler(readyClient);
   runStartupHealthCheck(readyClient).catch((error) => {

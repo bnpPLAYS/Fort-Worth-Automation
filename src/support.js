@@ -5,7 +5,6 @@ const {
   ChannelType,
   ModalBuilder,
   PermissionFlagsBits,
-  SectionBuilder,
   SeparatorBuilder,
   TextDisplayBuilder,
   TextInputBuilder,
@@ -192,12 +191,12 @@ function buildAssistanceIntroContent() {
   );
 }
 
-function buildAssistanceOptionSection(option) {
-  return new SectionBuilder().addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(
-      `${option.emoji} **${option.title}**\n-# ${option.description}`,
-    ),
+function buildAssistanceOptionsContent() {
+  const lines = ASSISTANCE_OPTIONS.map(
+    (option) => `${option.emoji} **${option.title}**\n-# ${option.description}`,
   );
+
+  return `### Available Options\n\n${lines.join("\n\n")}`;
 }
 
 function buildAssistanceHubPayload() {
@@ -205,14 +204,7 @@ function buildAssistanceHubPayload() {
 
   container.addTextDisplayComponents(new TextDisplayBuilder().setContent(buildAssistanceIntroContent()));
   container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
-  container.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent("### Available Options"),
-  );
-
-  for (const option of ASSISTANCE_OPTIONS) {
-    container.addSectionComponents(buildAssistanceOptionSection(option));
-  }
-
+  container.addTextDisplayComponents(new TextDisplayBuilder().setContent(buildAssistanceOptionsContent()));
   container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
   container.addActionRowComponents(buildContactSupportButton());
   appendHpdFooter(container, files);

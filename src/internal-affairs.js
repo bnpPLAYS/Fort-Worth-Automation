@@ -605,4 +605,6 @@ module.exports = {
   handleInternalAffairsAutocomplete,
   handleInfractionCommand,
   handleInfoCommand,
+  clearMemberNicknameCallsign,
+  getMemberRankDisplay,
 };

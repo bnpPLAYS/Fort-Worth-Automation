@@ -43,6 +43,7 @@ const {
 } = require("./internal-affairs");
 const { handleHpdDashboardCommand } = require("./hpd-dashboard");
 const { handleHpdResourcesCommand } = require("./hpd-resources");
+const { handleHpdRetirementInteraction } = require("./hpd-retirement");
 const { handleMassShiftCommand, handleMassShiftInteraction } = require("./mass-shift");
 const {
   handleSupportPanelCommand,
@@ -215,6 +216,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
 
     handled = await handleCadetInteraction(interaction);
+    if (handled) return;
+
+    handled = await handleHpdRetirementInteraction(interaction);
     if (handled) return;
 
     handled = await handleRideAlongInteraction(interaction);

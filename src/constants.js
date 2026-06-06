@@ -43,4 +43,12 @@ module.exports = {
   CADET_ENROLL_COOLDOWN_MS: 3 * 24 * 60 * 60 * 1000,
   /** Cadets must submit /ridealong within this window after enrolling */
   CADET_INACTIVITY_MS: 7 * 24 * 60 * 60 * 1000,
+  /**
+   * Role ID(s) kept when a member retires from HPD (comma-separated in HPD_RETIREMENT_KEEP_ROLE_ID).
+   * All other assignable roles are removed. @everyone is always kept.
+   */
+  HPD_RETIREMENT_KEEP_ROLE_IDS: String(process.env.HPD_RETIREMENT_KEEP_ROLE_ID ?? "")
+    .split(/[,;\s]+/)
+    .map((id) => id.trim())
+    .filter(Boolean),
 };

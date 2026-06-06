@@ -13,6 +13,7 @@ const {
   appendHpdFooter,
   buildHpdComponentsPayload,
 } = require("./hpd-components");
+const { HPD_RETIRE_BUTTON_ID } = require("./hpd-retirement");
 
 const RESOURCES_COMMAND = "-hpdresources";
 
@@ -88,6 +89,23 @@ function buildHpdResourcesPayload() {
   for (const resource of RESOURCE_LINKS) {
     container.addSectionComponents(buildResourceSection(resource));
   }
+
+  container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+  container.addSectionComponents(
+    new SectionBuilder()
+      .addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          "**Retire from HPD**\n" +
+            "Leave the department voluntarily. Your roles, callsign, and roster entry will be removed.",
+        ),
+      )
+      .setButtonAccessory(
+        new ButtonBuilder()
+          .setCustomId(HPD_RETIRE_BUTTON_ID)
+          .setLabel("Retire")
+          .setStyle(ButtonStyle.Danger),
+      ),
+  );
 
   appendHpdFooter(container, files);
 

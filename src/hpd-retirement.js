@@ -7,8 +7,8 @@ const {
 const {
   HPD_EMOJI,
   HPD_RETIREMENT_KEEP_ROLE_IDS,
+  HPD_RETIREMENT_ADD_ROLE_IDS,
   IA_RELEASE_CHANNEL_ID,
-  ROSTER_SYNC_ROLE_ID,
 } = require("./constants");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { hasRosterSyncRole, isDepartmentMember } = require("./member-roster");
@@ -72,12 +72,20 @@ async function applyRetirementRoles(member) {
     await member.roles.remove(toRemove, "HPD retirement");
   }
 
-  const toAdd = HPD_RETIREMENT_KEEP_ROLE_IDS.filter((roleId) => !member.roles.cache.has(roleId));
+  const toAdd = [
+    ...HPD_RETIREMENT_KEEP_ROLE_IDS.filter((roleId) => !member.roles.cache.has(roleId)),
+    ...HPD_RETIREMENT_ADD_ROLE_IDS.filter((roleId) => !member.roles.cache.has(roleId)),
+  ];
+
   if (toAdd.length > 0) {
-    await member.roles.add(toAdd, "HPD retirement — restore member role");
+    await member.roles.add(toAdd, "HPD retirement");
   }
 
-  return { removed: toRemove.length, kept: [...keepRoleIds].filter((id) => id !== member.guild.id) };
+  return {
+    removed: toRemove.length,
+    kept: HPD_RETIREMENT_KEEP_ROLE_IDS,
+    added: HPD_RETIREMENT_ADD_ROLE_IDS,
+  };
 }
 
 async function processMemberRetirement(client, member, reason) {
@@ -191,7 +199,11 @@ async function handleHpdRetirementInteraction(interaction) {
     ];
 
     if (HPD_RETIREMENT_KEEP_ROLE_IDS.length > 0) {
-      lines.push(`Kept member role(s): ${HPD_RETIREMENT_KEEP_ROLE_IDS.map((id) => `<@&${id}>`).join(", ")}.`);
+      lines.push(`Kept: ${HPD_RETIREMENT_KEEP_ROLE_IDS.map((id) => `<@&${id}>`).join(", ")}.`);
+    }
+
+    if (HPD_RETIREMENT_ADD_ROLE_IDS.length > 0) {
+      lines.push(`Assigned: ${HPD_RETIREMENT_ADD_ROLE_IDS.map((id) => `<@&${id}>`).join(", ")}.`);
     }
 
     if (result.nicknameResult?.ok && result.nicknameResult.changed) {

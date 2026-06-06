@@ -1,12 +1,17 @@
+const path = require("path");
+const fs = require("fs");
 const {
   ActionRowBuilder,
+  AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
   PermissionFlagsBits,
+  SectionBuilder,
   SeparatorBuilder,
   TextDisplayBuilder,
+  ThumbnailBuilder,
 } = require("discord.js");
-const { STAFF_PING_ROLE_ID, ROSTER_SYNC_ROLE_ID } = require("./constants");
+const { STAFF_PING_ROLE_ID, ROSTER_SYNC_ROLE_ID, HPD_EMOJI } = require("./constants");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { getErrorMessage } = require("./embed-utils");
 const {
@@ -18,6 +23,9 @@ const { saveMassShift, addResponder, getMassShift } = require("./mass-shift-stor
 
 const MASS_SHIFT_COMMAND = "-massshift";
 const RESPOND_BUTTON_ID = "mass_shift_respond";
+const ATTENDING_DISPLAY_BUTTON_ID = "mass_shift_attending_display";
+const BOT_AVATAR_FILENAME = "bot-avatar.png";
+const BOT_AVATAR_PATH = path.join(__dirname, "..", "assets", BOT_AVATAR_FILENAME);
 
 function canRunMassShift(member) {
   if (
@@ -39,66 +47,92 @@ function formatShiftTime(date = new Date()) {
   });
 }
 
-function formatShiftFooterTime(date = new Date()) {
-  return date.toLocaleString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: "America/Chicago",
-  });
-}
-
-function buildRespondersBlock(responders) {
-  if (!responders?.length) {
-    return "**Responders**\n*No responses yet.*";
-  }
-
-  const lines = responders.map((entry, index) => `${index + 1}. ${entry.name}`);
-  return `**Responders (${responders.length})**\n${lines.join("\n")}`;
-}
-
-function buildMassShiftBody(startedAt, responders, { includePing = false } = {}) {
+function buildMassShiftAnnouncement(startedAt, { includePing = false } = {}) {
   const timeLabel = formatShiftTime(new Date(startedAt));
-  const footerTime = formatShiftFooterTime(new Date(startedAt));
-  const pingLine = includePing ? `<@&${ROSTER_SYNC_ROLE_ID}>\n\n` : "";
+  const leadLine = includePing
+    ? `<@&${ROSTER_SYNC_ROLE_ID}> ${HPD_EMOJI}\n\n`
+    : `${HPD_EMOJI}\n\n`;
 
   return (
-    pingLine +
+    leadLine +
     "## Mass Shift\n\n" +
-    `A *mass shift* is now in effect, as of \`${timeLabel}\`. All online **Houston Police Officers** are required to get in-game!\n\n` +
-    "### 📋 Steps\n" +
-    "Make sure you:\n" +
-    "- Have the correct vehicle preset\n" +
-    "- Have the correct uniform\n" +
-    "- Have the correct utilities\n" +
-    "- Are following department procedures\n\n" +
-    "Failure to abide by the **Mass Shift** guidelines may result in a dismissal from duty, or further administrative action.\n\n" +
-    `${buildRespondersBlock(responders)}\n\n` +
-    `— *Houston Police Department • ${footerTime}*`
+    "• A **mass shift** is now in effect as of `" +
+    `${timeLabel}\`. All available **Houston Police Department** personnel are expected in-game immediately. ` +
+    "High command appreciates your dedication and service to the department."
   );
 }
 
-function buildRespondButtonRow() {
+function buildAttendingBlock(responders) {
+  if (!responders?.length) {
+    return "**Attending Personnel**\n*No personnel marked attending yet.*";
+  }
+
+  const lines = responders.map((entry, index) => `${index + 1}. ${entry.name}`);
+  return `**Attending Personnel (${responders.length})**\n${lines.join("\n")}`;
+}
+
+function addBotAvatarAttachment(files) {
+  if (!fs.existsSync(BOT_AVATAR_PATH)) {
+    return false;
+  }
+
+  if (!files.some((file) => file.name === BOT_AVATAR_FILENAME)) {
+    files.push(new AttachmentBuilder(BOT_AVATAR_PATH, { name: BOT_AVATAR_FILENAME }));
+  }
+
+  return true;
+}
+
+function buildAnnouncementSection(content, files) {
+  const section = new SectionBuilder().addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(content),
+  );
+
+  if (!addBotAvatarAttachment(files)) {
+    return null;
+  }
+
+  return section.setThumbnailAccessory(
+    new ThumbnailBuilder()
+      .setURL(`attachment://${BOT_AVATAR_FILENAME}`)
+      .setDescription("Houston Police Department"),
+  );
+}
+
+function buildMassShiftButtonRow(responderCount) {
+  const attendingLabel =
+    responderCount > 0 ? `Attending · ${responderCount}` : "Attending";
+
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(RESPOND_BUTTON_ID)
-      .setLabel("Respond")
+      .setLabel("Attend")
       .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(ATTENDING_DISPLAY_BUTTON_ID)
+      .setLabel(attendingLabel)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true),
   );
 }
 
 function buildMassShiftContainer(shift, { includePing = false } = {}) {
   const { container, files } = createHpdContainer();
+  const announcement = buildMassShiftAnnouncement(shift.startedAt, { includePing });
+  const announcementSection = buildAnnouncementSection(announcement, files);
 
+  if (announcementSection) {
+    container.addSectionComponents(announcementSection);
+  } else {
+    container.addTextDisplayComponents(new TextDisplayBuilder().setContent(announcement));
+  }
+
+  container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
   container.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(
-      buildMassShiftBody(shift.startedAt, shift.responders, { includePing }),
-    ),
+    new TextDisplayBuilder().setContent(buildAttendingBlock(shift.responders)),
   );
   container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
-  container.addActionRowComponents(buildRespondButtonRow());
+  container.addActionRowComponents(buildMassShiftButtonRow(shift.responders.length));
   appendHpdFooter(container, files);
 
   return { container, files };
@@ -192,13 +226,13 @@ async function handleMassShiftInteraction(interaction) {
   try {
     await interaction.message.edit(buildMassShiftEditPayload(result.shift));
     await interaction.reply({
-      content: "You have been added to the **responders** list.",
+      content: "You have been marked as **attending** this mass shift.",
       ephemeral: true,
     });
   } catch (error) {
     console.error("Mass shift respond failed:", error);
     await interaction.reply({
-      content: `Could not update the responders list: ${getErrorMessage(error)}`,
+      content: `Could not update the attending list: ${getErrorMessage(error)}`,
       ephemeral: true,
     });
   }

@@ -7,7 +7,7 @@ const {
 } = require("./client");
 const { expandRankSlots } = require("./roster-expand");
 const { ranksMatch } = require("../rank-matching");
-const { findUserIdByCallsign } = require("../roster-links-store");
+const { findUserIdByCallsign, clearRosterLink } = require("../roster-links-store");
 const {
   findEntriesToClearForAssignment,
   findNamedEntriesByCallsign,
@@ -27,7 +27,7 @@ function findOpenSlotInRank(entries, newRank) {
   });
 }
 
-function findOpenCadetSlot(entries) {
+function listOpenCadetSlots(entries) {
   const cadetRank = getCadetRankName();
 
   return entries
@@ -43,16 +43,45 @@ function findOpenCadetSlot(entries) {
       cadetNumber: Number.parseInt(entry.callsign.replace(/^C-/i, ""), 10),
     }))
     .filter((entry) => entry.cadetNumber >= 1 && entry.cadetNumber <= 100)
-    .sort((left, right) => left.cadetNumber - right.cadetNumber)[0];
+    .sort((left, right) => left.cadetNumber - right.cadetNumber);
 }
 
-function validateOpenSlotAssignment(entries, slot, { member, roleplayName } = {}) {
+function clearStaleCallsignLink(callsign, entries, { memberId } = {}) {
+  const linkedUserId = findUserIdByCallsign(callsign);
+  if (!linkedUserId || linkedUserId === memberId) return false;
+
+  const owners = findNamedEntriesByCallsign(entries, callsign);
+  if (owners.length > 0) return false;
+
+  clearRosterLink(linkedUserId);
+  console.log(`[roster] Cleared stale callsign link for ${formatCallsignForDisplay(callsign)}`);
+  return true;
+}
+
+function findOpenCadetSlot(entries, { member } = {}) {
+  for (const slot of listOpenCadetSlots(entries)) {
+    clearStaleCallsignLink(slot.callsign, entries, { memberId: member?.id });
+
+    const linkedUserId = findUserIdByCallsign(slot.callsign);
+    if (linkedUserId && linkedUserId !== member?.id) {
+      continue;
+    }
+
+    return slot;
+  }
+
+  return null;
+}
+
+function validateOpenSlotAssignment(entries, slot, { member } = {}) {
   const owners = findNamedEntriesByCallsign(entries, slot.callsign);
   if (owners.length > 0) {
     throw new Error(
       `Callsign **${formatCallsignForDisplay(slot.callsign)}** is already assigned to **${owners[0].name}** on the roster.`,
     );
   }
+
+  clearStaleCallsignLink(slot.callsign, entries, { memberId: member?.id });
 
   const linkedUserId = findUserIdByCallsign(slot.callsign);
   if (linkedUserId && linkedUserId !== member?.id) {
@@ -134,7 +163,7 @@ async function assignMemberToOpenRank(
 
 async function assignCadetCallsign(roleplayName, { currentCallsign, member } = {}) {
   const { entries, sheetName } = await getRosterRows();
-  const openSlot = findOpenCadetSlot(entries);
+  const openSlot = findOpenCadetSlot(entries, { member });
 
   if (!openSlot) {
     throw new Error(

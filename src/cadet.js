@@ -18,8 +18,7 @@ const { getRoleplayNameFromMember, updateMemberCallsign } = require("./discord-c
 const {
   assignMemberRosterRoles,
   sendCallsignDm,
-  isBlockedFromRecruitmentFlows,
-  RECRUITMENT_BLOCKED_MESSAGE,
+  getCadetEnrollBlockReason,
 } = require("./member-roster");
 const { pauseRoleSyncForMember, pauseRoleSyncGlobally } = require("./role-sync-guard");
 const { formatRoleplayInitials } = require("./roleplay-name");
@@ -756,8 +755,9 @@ async function handleCadetInteraction(interaction) {
       return true;
     }
 
-    if (isBlockedFromRecruitmentFlows(member)) {
-      await interaction.reply({ content: RECRUITMENT_BLOCKED_MESSAGE, ephemeral: true });
+    const cadetBlockReason = getCadetEnrollBlockReason(member);
+    if (cadetBlockReason) {
+      await interaction.reply({ content: cadetBlockReason, ephemeral: true });
       return true;
     }
 
@@ -786,8 +786,9 @@ async function handleCadetInteraction(interaction) {
 
   await interaction.deferReply({ ephemeral: true });
 
-  if (isBlockedFromRecruitmentFlows(member)) {
-    await interaction.editReply(RECRUITMENT_BLOCKED_MESSAGE);
+  const cadetBlockReason = getCadetEnrollBlockReason(member);
+  if (cadetBlockReason) {
+    await interaction.editReply(cadetBlockReason);
     return true;
   }
 
@@ -812,12 +813,40 @@ async function handleCadetInteraction(interaction) {
   pauseRoleSyncGlobally(45_000);
   pauseRoleSyncForMember(member, 120_000);
 
-  const rolesToAdd = CADET_ENROLL_ROLE_IDS.filter((roleId) => !member.roles.cache.has(roleId));
+  let cadetAssignment = null;
+  if (isSheetsConfigured()) {
+    try {
+      cadetAssignment = await assignCadetCallsign(roleplayName, {
+        currentCallsign: getRosterCallsignForMember(member),
+        member,
+      });
+    } catch (error) {
+      console.error("Cadet callsign assignment failed:", error);
+      await interaction.editReply(
+        `Could not enroll you as a cadet: ${error.message}\n\n` +
+          "No roles were assigned. Contact staff if this keeps happening.",
+      );
+      return true;
+    }
+  }
 
+  const rolesToAdd = CADET_ENROLL_ROLE_IDS.filter((roleId) => !member.roles.cache.has(roleId));
   if (rolesToAdd.length > 0) {
-    await member.roles.add(rolesToAdd, "Become Cadet").catch((error) => {
+    try {
+      await member.roles.add(rolesToAdd, "Become Cadet");
+    } catch (error) {
       console.error("Failed to assign cadet roles:", error);
-    });
+      if (cadetAssignment) {
+        await clearRosterForName(roleplayName, {
+          currentCallsign: cadetAssignment.callsign,
+          member,
+        }).catch(() => null);
+      }
+      await interaction.editReply(
+        `Could not assign your cadet roles: ${error.message}\n\nContact staff for help.`,
+      );
+      return true;
+    }
   }
 
   let reply =
@@ -826,52 +855,44 @@ async function handleCadetInteraction(interaction) {
     "You must complete **2 ride-alongs** before you can become a **Probationary Officer**.\n\n" +
     `When you are ready, go to <#${RA_REQUEST_CHANNEL_ID}> and run **/ridealong** to request a ride-along.`;
 
-  if (isSheetsConfigured()) {
-    try {
-      const cadetAssignment = await assignCadetCallsign(roleplayName, {
-        currentCallsign: getRosterCallsignForMember(member),
-      });
-      const nicknameResult = await updateMemberCallsign(
-        member,
-        cadetAssignment.callsign,
-        roleplayName,
-      );
+  if (cadetAssignment) {
+    const nicknameResult = await updateMemberCallsign(
+      member,
+      cadetAssignment.callsign,
+      roleplayName,
+    );
 
-      reply +=
-        `\n\nYour assigned **cadet callsign** is **${cadetAssignment.callsign}**.` +
-        "\n**Do not use this callsign in-game.** You are not officially part of the department until you pass the Quiz and receive a department callsign.";
+    reply +=
+      `\n\nYour assigned **cadet callsign** is **${cadetAssignment.callsign}**.` +
+      "\n**Do not use this callsign in-game.** You are not officially part of the department until you pass the Quiz and receive a department callsign.";
 
-      if (nicknameResult.ok && nicknameResult.changed) {
-        reply += `\nYour Discord nickname was updated to \`${nicknameResult.nickname}\`.`;
-      }
-
-      await sendCallsignDm(member.user, {
-        callsign: cadetAssignment.callsign,
-        roleplayName,
-        rank: cadetAssignment.rank,
-        isCadet: true,
-        title: "You have been enrolled as a **Cadet**.",
-        extraLines: nicknameResult.ok && nicknameResult.changed
-          ? [`Your Discord nickname is now \`${nicknameResult.nickname}\`.`]
-          : [],
-      });
-
-      recordMemberRosterLinkFromResult(member, cadetAssignment);
-
-      await logRosterAudit(interaction.client, interaction.guild.id, {
-        title: "Cadet enrolled",
-        actor: member,
-        target: member,
-        roleplayName,
-        rank: cadetAssignment.rank,
-        callsign: cadetAssignment.callsign,
-        rowNumber: cadetAssignment.rowNumber,
-        trigger: "Become Cadet",
-      }).catch(() => null);
-    } catch (error) {
-      console.error("Cadet callsign assignment failed:", error);
-      reply += `\n\nCould not assign a cadet callsign on the roster: ${error.message}`;
+    if (nicknameResult.ok && nicknameResult.changed) {
+      reply += `\nYour Discord nickname was updated to \`${nicknameResult.nickname}\`.`;
     }
+
+    await sendCallsignDm(member.user, {
+      callsign: cadetAssignment.callsign,
+      roleplayName,
+      rank: cadetAssignment.rank,
+      isCadet: true,
+      title: "You have been enrolled as a **Cadet**.",
+      extraLines: nicknameResult.ok && nicknameResult.changed
+        ? [`Your Discord nickname is now \`${nicknameResult.nickname}\`.`]
+        : [],
+    });
+
+    recordMemberRosterLinkFromResult(member, cadetAssignment);
+
+    await logRosterAudit(interaction.client, interaction.guild.id, {
+      title: "Cadet enrolled",
+      actor: member,
+      target: member,
+      roleplayName,
+      rank: cadetAssignment.rank,
+      callsign: cadetAssignment.callsign,
+      rowNumber: cadetAssignment.rowNumber,
+      trigger: "Become Cadet",
+    }).catch(() => null);
   } else {
     reply += "\n\nRoster assignment is not configured yet. Contact staff for your cadet callsign.";
   }

@@ -1,4 +1,13 @@
-const { MEMBER_ROSTER_ROLE_IDS, ROSTER_SYNC_ROLE_ID } = require("./constants");
+const {
+  MEMBER_ROSTER_ROLE_IDS,
+  ROSTER_SYNC_ROLE_ID,
+  CADET_DISCORD_ROLE_ID,
+  PROBATIONARY_OFFICER_ROLE_ID,
+} = require("./constants");
+
+const DEPARTMENT_PERSONNEL_ROLE_ID = MEMBER_ROSTER_ROLE_IDS.find(
+  (roleId) => roleId !== ROSTER_SYNC_ROLE_ID,
+);
 const { formatCallsignForDisplay } = require("./discord-callsign");
 
 async function assignMemberRosterRoles(member, reason = "Roster member setup") {
@@ -80,9 +89,34 @@ function hasRosterSyncRole(member) {
 const RECRUITMENT_BLOCKED_MESSAGE =
   "You are already on the department roster and cannot use **Become Cadet**, **Quiz**, or **Voice Interview**.";
 
-/** Applicants only — members with the roster sync role are already on the sheet. */
+/** Full department members — not cadet-track applicants with only a roster-sync role. */
+function isDepartmentMember(member) {
+  if (!member || member.user?.bot) return false;
+  if (member.roles?.cache?.has(PROBATIONARY_OFFICER_ROLE_ID)) return true;
+  if (
+    hasRosterSyncRole(member) &&
+    DEPARTMENT_PERSONNEL_ROLE_ID &&
+    member.roles?.cache?.has(DEPARTMENT_PERSONNEL_ROLE_ID)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Quiz and voice interview are for applicants who are not already department members. */
 function isBlockedFromRecruitmentFlows(member) {
-  return hasRosterSyncRole(member);
+  return isDepartmentMember(member);
+}
+
+function getCadetEnrollBlockReason(member) {
+  if (!member) return null;
+  if (member.roles?.cache?.has(CADET_DISCORD_ROLE_ID)) {
+    return "You are already enrolled as a **Cadet**.";
+  }
+  if (isDepartmentMember(member)) {
+    return RECRUITMENT_BLOCKED_MESSAGE;
+  }
+  return null;
 }
 
 module.exports = {
@@ -90,6 +124,8 @@ module.exports = {
   sendCallsignDm,
   mergeRoleIds,
   hasRosterSyncRole,
+  isDepartmentMember,
   isBlockedFromRecruitmentFlows,
+  getCadetEnrollBlockReason,
   RECRUITMENT_BLOCKED_MESSAGE,
 };

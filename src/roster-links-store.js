@@ -61,12 +61,14 @@ function clearRosterLink(userId) {
   return true;
 }
 
+const { callsignsMatch } = require("./discord-callsign");
+
 function findUserIdByCallsign(callsign) {
   if (!callsign) return null;
 
   const links = loadLinks();
   for (const [userId, link] of Object.entries(links)) {
-    if (link?.callsign && String(link.callsign).replace(/\D/g, "") === String(callsign).replace(/\D/g, "")) {
+    if (link?.callsign && callsignsMatch(callsign, link.callsign)) {
       return userId;
     }
   }

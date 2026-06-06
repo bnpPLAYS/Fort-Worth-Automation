@@ -1,7 +1,6 @@
 const {
   MEMBER_ROSTER_ROLE_IDS,
   ROSTER_SYNC_ROLE_ID,
-  CADET_DISCORD_ROLE_ID,
   PROBATIONARY_OFFICER_ROLE_ID,
 } = require("./constants");
 
@@ -9,6 +8,7 @@ const DEPARTMENT_PERSONNEL_ROLE_ID = MEMBER_ROSTER_ROLE_IDS.find(
   (roleId) => roleId !== ROSTER_SYNC_ROLE_ID,
 );
 const { formatCallsignForDisplay } = require("./discord-callsign");
+const { getRosterCallsignForMember } = require("./google-sheets/roster-match");
 
 async function assignMemberRosterRoles(member, reason = "Roster member setup") {
   if (!member) {
@@ -108,13 +108,21 @@ function isBlockedFromRecruitmentFlows(member) {
   return isDepartmentMember(member);
 }
 
+function isCadetTrackMember(member) {
+  if (!member || member.user?.bot || isDepartmentMember(member)) return false;
+  if (!hasRosterSyncRole(member)) return false;
+
+  const callsign = getRosterCallsignForMember(member);
+  return /^C-/i.test(String(callsign ?? ""));
+}
+
 function getCadetEnrollBlockReason(member) {
   if (!member) return null;
-  if (member.roles?.cache?.has(CADET_DISCORD_ROLE_ID)) {
-    return "You are already enrolled as a **Cadet**.";
-  }
   if (isDepartmentMember(member)) {
     return RECRUITMENT_BLOCKED_MESSAGE;
+  }
+  if (isCadetTrackMember(member)) {
+    return "You are already enrolled as a **Cadet**.";
   }
   return null;
 }
@@ -125,6 +133,7 @@ module.exports = {
   mergeRoleIds,
   hasRosterSyncRole,
   isDepartmentMember,
+  isCadetTrackMember,
   isBlockedFromRecruitmentFlows,
   getCadetEnrollBlockReason,
   RECRUITMENT_BLOCKED_MESSAGE,

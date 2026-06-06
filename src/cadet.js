@@ -639,6 +639,9 @@ async function executeRideAlongFail(interaction, request, applicant, score) {
   await applicant.roles.remove(CADET_ROLE_IDS).catch((error) => {
     console.error("Failed to remove cadet roles on fail:", error);
   });
+  await applicant.roles.remove(CADET_ENROLL_ROLE_IDS).catch((error) => {
+    console.error("Failed to remove cadet roster role on fail:", error);
+  });
   await applicant.roles.remove(PROBATIONARY_OFFICER_ROLE_ID).catch((error) => {
     console.error("Failed to remove probationary officer role on fail:", error);
   });

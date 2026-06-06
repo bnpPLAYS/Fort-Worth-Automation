@@ -22,8 +22,8 @@ module.exports = {
   ROSTER_SYNC_ROLE_ID: "1484951746852818944",
   /** Discord rank role for cadets (Become Cadet + ride-along track) */
   CADET_DISCORD_ROLE_ID: "1495414411840454676",
-  /** Become Cadet assigns only these roles (cadet rank + roster sync) */
-  CADET_ENROLL_ROLE_IDS: ["1495414411840454676", "1484951746852818944"],
+  /** Become Cadet assigns only the roster sync role */
+  CADET_ENROLL_ROLE_IDS: ["1484951746852818944"],
   /** Removed from members when they enroll as cadet */
   CADET_FORBIDDEN_ROLE_IDS: ["1484975766868594699", "1498375617455067387"],
   /** On-duty role — cadets must not keep this */

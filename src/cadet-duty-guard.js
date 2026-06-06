@@ -1,10 +1,8 @@
 const { Events } = require("discord.js");
 const {
   ON_DUTY_ROLE_ID,
-  CADET_DISCORD_ROLE_ID,
-  PROBATIONARY_OFFICER_ROLE_ID,
 } = require("./constants");
-const { isDepartmentMember } = require("./member-roster");
+const { isCadetTrackMember } = require("./member-roster");
 
 const DUTY_WARNING_INTERVAL_MS = 60_000;
 const DUTY_WARNING_MESSAGE =
@@ -15,9 +13,7 @@ const activeWarnings = new Map();
 function isCadetOnDuty(member) {
   if (!member || member.user?.bot) return false;
   if (!member.roles.cache.has(ON_DUTY_ROLE_ID)) return false;
-  if (member.roles.cache.has(PROBATIONARY_OFFICER_ROLE_ID)) return false;
-  if (isDepartmentMember(member)) return false;
-  return member.roles.cache.has(CADET_DISCORD_ROLE_ID);
+  return isCadetTrackMember(member);
 }
 
 function stopDutyWarning(userId) {

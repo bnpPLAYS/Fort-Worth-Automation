@@ -10,7 +10,7 @@ const {
   TextInputBuilder,
   TextInputStyle,
 } = require("discord.js");
-const { RA_STAFF_ROLE_IDS, PROBATIONARY_OFFICER_ROLE_ID, CADET_ENROLL_COOLDOWN_MS, BOT_NAME, CADET_FORBIDDEN_ROLE_IDS } = require("./constants");
+const { RA_STAFF_ROLE_IDS, PROBATIONARY_OFFICER_ROLE_ID, CADET_ENROLL_COOLDOWN_MS, BOT_NAME, CADET_ENROLL_ROLE_IDS } = require("./constants");
 const { buildV2Payload, buildV2EditPayload } = require("./v2-message");
 const { hasProcessed, markProcessed } = require("./panel-dedupe");
 const { isOnCooldown, setCooldown, getCooldownRemainingMs } = require("./cooldowns");
@@ -63,7 +63,8 @@ const CADET_ENROLL_MODAL_ID = "cadet_enroll_modal";
 const RIDEALONG_COMMAND_NAME = "ridealong";
 const RIDEALONG_MODAL_ID = "ridealong_modal";
 
-const { CADET_ROLE_IDS, CADET_ENROLL_ROLE_IDS } = require("./rank-options");
+const { applyCadetEnrollmentRoles } = require("./cadet-enroll-roles");
+const { CADET_ROLE_IDS } = require("./rank-options");
 const { scanCadetDutyState } = require("./cadet-duty-guard");
 
 /** Cadets use /ridealong here; request posts appear in this channel */
@@ -782,7 +783,7 @@ async function handleCadetInteraction(interaction) {
     return false;
   }
 
-  const member = interaction.member;
+  let member = interaction.member;
   if (!member) {
     await interaction.reply({ content: "This can only be used in a server.", ephemeral: true });
     return true;
@@ -817,6 +818,16 @@ async function handleCadetInteraction(interaction) {
   pauseRoleSyncGlobally(120_000);
   pauseRoleSyncForMember(member, 300_000);
 
+  try {
+    member = await applyCadetEnrollmentRoles(member);
+  } catch (error) {
+    console.error("[cadet] Role assignment failed before sheet setup:", error);
+    await interaction.editReply(
+      `Could not assign your cadet roles: ${error.message}\n\nNo roster changes were made.`,
+    );
+    return true;
+  }
+
   let cadetAssignment = null;
   if (isSheetsConfigured()) {
     try {
@@ -826,41 +837,27 @@ async function handleCadetInteraction(interaction) {
       });
     } catch (error) {
       console.error("Cadet callsign assignment failed:", error);
+      await member.roles.remove(CADET_ENROLL_ROLE_IDS, "Become Cadet rollback").catch(() => null);
       await interaction.editReply(
         `Could not enroll you as a cadet: ${error.message}\n\n` +
-          "No roles were assigned. Contact staff if this keeps happening.",
+          "Your cadet roles were removed. Contact staff if this keeps happening.",
       );
       return true;
     }
   }
 
-  const forbiddenRoles = [
-    ...new Set([PROBATIONARY_OFFICER_ROLE_ID, ...CADET_FORBIDDEN_ROLE_IDS]),
-  ].filter((roleId) => member.roles.cache.has(roleId));
-
-  if (forbiddenRoles.length > 0) {
-    await member.roles.remove(forbiddenRoles, "Become Cadet — remove incompatible roles").catch((error) => {
-      console.error("Failed to remove incompatible roles on cadet enroll:", error);
-    });
-  }
-
-  const rolesToAdd = CADET_ENROLL_ROLE_IDS.filter((roleId) => !member.roles.cache.has(roleId));
-  if (rolesToAdd.length > 0) {
-    try {
-      await member.roles.add(rolesToAdd, "Become Cadet");
-    } catch (error) {
-      console.error("Failed to assign cadet roles:", error);
-      if (cadetAssignment) {
-        await clearRosterForName(roleplayName, {
-          currentCallsign: cadetAssignment.callsign,
-          member,
-        }).catch(() => null);
-      }
-      await interaction.editReply(
-        `Could not assign your cadet roles: ${error.message}\n\nContact staff for help.`,
-      );
-      return true;
+  try {
+    member = await applyCadetEnrollmentRoles(member);
+  } catch (error) {
+    console.error("[cadet] Role verification failed after sheet setup:", error);
+    if (cadetAssignment) {
+      await clearRosterForName(roleplayName, {
+        currentCallsign: cadetAssignment.callsign,
+        member,
+      }).catch(() => null);
     }
+    await interaction.editReply(`Could not finalize cadet enrollment: ${error.message}`);
+    return true;
   }
 
   let reply =

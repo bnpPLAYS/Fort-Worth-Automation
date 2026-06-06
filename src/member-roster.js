@@ -2,6 +2,7 @@ const {
   MEMBER_ROSTER_ROLE_IDS,
   ROSTER_SYNC_ROLE_ID,
   PROBATIONARY_OFFICER_ROLE_ID,
+  CADET_DISCORD_ROLE_ID,
 } = require("./constants");
 
 const DEPARTMENT_PERSONNEL_ROLE_ID = MEMBER_ROSTER_ROLE_IDS.find(
@@ -110,6 +111,7 @@ function isBlockedFromRecruitmentFlows(member) {
 
 function isCadetTrackMember(member) {
   if (!member || member.user?.bot || isDepartmentMember(member)) return false;
+  if (member.roles?.cache?.has(CADET_DISCORD_ROLE_ID)) return true;
   if (!hasRosterSyncRole(member)) return false;
 
   const callsign = getRosterCallsignForMember(member);
@@ -121,7 +123,7 @@ function getCadetEnrollBlockReason(member) {
   if (isDepartmentMember(member)) {
     return RECRUITMENT_BLOCKED_MESSAGE;
   }
-  if (isCadetTrackMember(member)) {
+  if (member.roles?.cache?.has(CADET_DISCORD_ROLE_ID) || isCadetTrackMember(member)) {
     return "You are already enrolled as a **Cadet**.";
   }
   return null;

@@ -6,6 +6,7 @@ const {
   ModalBuilder,
   PermissionFlagsBits,
   SeparatorBuilder,
+  StringSelectMenuBuilder,
   TextDisplayBuilder,
   TextInputBuilder,
   TextInputStyle,
@@ -29,6 +30,7 @@ const {
 const SUPPORT_PANEL_COMMAND = "-supportpanel";
 
 const CONTACT_BUTTON_ID = "support_contact";
+const SUPPORT_TYPE_SELECT_ID = "support_contact_select";
 const TYPE_QUIZ_ID = "support_type_quiz";
 const LEGACY_TYPE_QUIZ_ID = "support_type_fastpass";
 const TYPE_INTERVIEW_ID = "support_type_interview";
@@ -153,101 +155,77 @@ function buildStaffPanelPayload() {
   });
 }
 
-const ASSISTANCE_OPTIONS = [
+const ASSISTANCE_CATEGORIES = [
   {
-    emoji: "🎫",
-    title: "Other",
-    description: "General questions, help, or issues that do not fit another category.",
+    name: "General Support",
+    items: [{ title: "Other", description: "Discord support and general questions" }],
   },
   {
-    emoji: "📝",
-    title: "Quiz",
-    description: "Start the department quiz / fast-track application.",
+    name: "Recruitment",
+    items: [
+      { title: "Quiz", description: "Department quiz application" },
+      { title: "Voice Interview", description: "Voice interview application" },
+    ],
   },
   {
-    emoji: "🎙️",
-    title: "Voice Interview",
-    description: "Apply through the voice interview process (join the waiting VC first).",
+    name: "Internal Affairs",
+    items: [{ title: "Report", description: "Report a member or officer" }],
   },
   {
-    emoji: "⚠️",
-    title: "Report",
-    description: "Report a member or officer to Internal Affairs.",
-  },
-  {
-    emoji: "⭐",
-    title: "Supervisor Exam",
-    description: "Supervisor promotion exam for eligible personnel.",
+    name: "Personnel",
+    items: [{ title: "Supervisor Exam", description: "Supervisor promotion exam" }],
   },
 ];
 
-function buildAssistanceIntroContent() {
-  return (
-    `## ${HPD_EMOJI} Houston Police Department\n` +
-    "### Assistance Hub\n\n" +
-    "> **Service with Respect, Dedicated to Protect.**\n\n" +
-    "Welcome to the **Assistance Hub**. Click **Contact Support** below, choose the option that fits your request, and follow the prompts.\n\n" +
-    "*Please remain patient — ticket staff are volunteers and will respond as soon as they can.*"
-  );
+const ASSISTANCE_TYPE_BY_TITLE = {
+  Other: TYPE_OTHER_ID,
+  Quiz: TYPE_QUIZ_ID,
+  "Voice Interview": TYPE_INTERVIEW_ID,
+  Report: TYPE_REPORT_ID,
+  "Supervisor Exam": TYPE_SUPERVISOR_EXAM_ID,
+};
+
+function buildAssistanceHubContent() {
+  const sections = ASSISTANCE_CATEGORIES.map((category) => {
+    const bullets = category.items
+      .map((item) => `• **${item.title}** — ${item.description}`)
+      .join("\n");
+    return `**${category.name}**\n${bullets}`;
+  });
+
+  return `## ${HPD_EMOJI} Houston Police Department Assistance\n\n${sections.join("\n\n")}`;
 }
 
-function buildAssistanceOptionsContent() {
-  const lines = ASSISTANCE_OPTIONS.map(
-    (option) => `${option.emoji} **${option.title}**\n-# ${option.description}`,
-  );
+function buildSupportTypeSelectMenu() {
+  const options = [];
 
-  return `### Available Options\n\n${lines.join("\n\n")}`;
+  for (const category of ASSISTANCE_CATEGORIES) {
+    for (const item of category.items) {
+      options.push({
+        label: item.title,
+        description: item.description.slice(0, 100),
+        value: ASSISTANCE_TYPE_BY_TITLE[item.title],
+      });
+    }
+  }
+
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(SUPPORT_TYPE_SELECT_ID)
+      .setPlaceholder("Contact Support")
+      .addOptions(options),
+  );
 }
 
 function buildAssistanceHubPayload() {
   const { container, files } = createHpdContainer();
 
-  container.addTextDisplayComponents(new TextDisplayBuilder().setContent(buildAssistanceIntroContent()));
+  container.addTextDisplayComponents(new TextDisplayBuilder().setContent(buildAssistanceHubContent()));
   container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
-  container.addTextDisplayComponents(new TextDisplayBuilder().setContent(buildAssistanceOptionsContent()));
-  container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
-  container.addActionRowComponents(buildContactSupportButton());
+  container.addActionRowComponents(buildSupportTypeSelectMenu());
   appendHpdFooter(container, files);
 
   return buildHpdComponentsPayload(container, files);
-}
-
-function buildContactSupportButton() {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(CONTACT_BUTTON_ID)
-      .setLabel("Contact Support")
-      .setStyle(ButtonStyle.Primary),
-  );
-}
-
-function buildSupportTypeButtons() {
-  return [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(TYPE_QUIZ_ID)
-        .setLabel("Quiz")
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(TYPE_INTERVIEW_ID)
-        .setLabel("Voice Interview")
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(TYPE_REPORT_ID)
-        .setLabel("Report")
-        .setStyle(ButtonStyle.Secondary),
-    ),
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(TYPE_OTHER_ID)
-        .setLabel("Other")
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(TYPE_SUPERVISOR_EXAM_ID)
-        .setLabel("Supervisor Exam")
-        .setStyle(ButtonStyle.Secondary),
-    ),
-  ];
 }
 
 function buildReportUserSelect() {
@@ -367,6 +345,106 @@ async function createOtherTicket(interaction) {
   await interaction.editReply(`Your support ticket has been opened: ${channel}`);
 }
 
+async function routeSupportType(interaction, typeId) {
+  if (typeId === TYPE_QUIZ_ID || typeId === LEGACY_TYPE_QUIZ_ID) {
+    const payload = {
+      content: "## Quiz Application\n\nUse the **Quiz** button below to begin your application.",
+      embeds: [],
+      components: [buildPanelButton()],
+    };
+
+    if (interaction.replied || interaction.deferred) {
+      await interaction.update(payload);
+    } else {
+      await interaction.reply({ ...payload, ephemeral: true });
+    }
+    return;
+  }
+
+  if (typeId === TYPE_INTERVIEW_ID) {
+    if (!interaction.guild) {
+      const payload = {
+        content: "Voice interviews can only be started in a server.",
+        embeds: [],
+        components: [],
+      };
+
+      if (interaction.replied || interaction.deferred) {
+        await interaction.update(payload);
+      } else {
+        await interaction.reply({ ...payload, ephemeral: true });
+      }
+      return;
+    }
+
+    const member = interaction.member;
+    if (!member) {
+      const payload = {
+        content: "Could not resolve your server membership.",
+        embeds: [],
+        components: [],
+      };
+
+      if (interaction.replied || interaction.deferred) {
+        await interaction.update(payload);
+      } else {
+        await interaction.reply({ ...payload, ephemeral: true });
+      }
+      return;
+    }
+
+    try {
+      await promptInterviewRoleplayName(interaction.client, {
+        guild: interaction.guild,
+        textChannel: interaction.channel,
+        hostMember: member,
+        interviewee: member,
+        interaction,
+      });
+    } catch (error) {
+      const payload = {
+        content: error.message ?? "Could not start the voice interview.",
+        embeds: [],
+        components: [buildInterviewPanelButton()],
+      };
+
+      if (interaction.replied || interaction.deferred) {
+        await interaction.update(payload).catch(() =>
+          interaction.reply({
+            content: error.message ?? "Could not start the voice interview.",
+            ephemeral: true,
+          }),
+        );
+      } else {
+        await interaction.reply({ ...payload, ephemeral: true });
+      }
+    }
+    return;
+  }
+
+  if (typeId === TYPE_REPORT_ID) {
+    const payload = {
+      content: "Select the member you are reporting:",
+      embeds: [],
+      components: [buildReportUserSelect()],
+    };
+
+    if (interaction.replied || interaction.deferred) {
+      await interaction.update(payload);
+    } else {
+      await interaction.reply({ ...payload, ephemeral: true });
+    }
+    return;
+  }
+
+  if (typeId === TYPE_OTHER_ID) {
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.deferReply({ ephemeral: true });
+    }
+    await createOtherTicket(interaction);
+  }
+}
+
 async function handleSupportPanelCommand(message) {
   if (message.content.trim().toLowerCase() !== SUPPORT_PANEL_COMMAND) return false;
   if (message.author.bot) return false;
@@ -426,10 +504,15 @@ async function handleSupportInteraction(interaction) {
   const examHandled = await handleSupervisorExamInteraction(interaction);
   if (examHandled) return true;
 
+  if (interaction.isStringSelectMenu() && interaction.customId === SUPPORT_TYPE_SELECT_ID) {
+    await routeSupportType(interaction, interaction.values[0]);
+    return true;
+  }
+
   if (interaction.isButton() && interaction.customId === CONTACT_BUTTON_ID) {
     await interaction.reply({
       content: "Select the type of support you need:",
-      components: buildSupportTypeButtons(),
+      components: [buildSupportTypeSelectMenu()],
       ephemeral: true,
     });
     return true;
@@ -437,75 +520,13 @@ async function handleSupportInteraction(interaction) {
 
   if (
     interaction.isButton() &&
-    (interaction.customId === TYPE_QUIZ_ID || interaction.customId === LEGACY_TYPE_QUIZ_ID)
+    (interaction.customId === TYPE_QUIZ_ID ||
+      interaction.customId === LEGACY_TYPE_QUIZ_ID ||
+      interaction.customId === TYPE_INTERVIEW_ID ||
+      interaction.customId === TYPE_REPORT_ID ||
+      interaction.customId === TYPE_OTHER_ID)
   ) {
-    await interaction.update({
-      content:
-        "## Quiz Application\n\nUse the **Quiz** button below to begin your application.",
-      embeds: [],
-      components: [buildPanelButton()],
-    });
-    return true;
-  }
-
-  if (interaction.isButton() && interaction.customId === TYPE_INTERVIEW_ID) {
-    if (!interaction.guild) {
-      await interaction.update({
-        content: "Voice interviews can only be started in a server.",
-        embeds: [],
-        components: [],
-      });
-      return true;
-    }
-
-    const member = interaction.member;
-    if (!member) {
-      await interaction.update({
-        content: "Could not resolve your server membership.",
-        embeds: [],
-        components: [],
-      });
-      return true;
-    }
-
-    try {
-      await promptInterviewRoleplayName(interaction.client, {
-        guild: interaction.guild,
-        textChannel: interaction.channel,
-        hostMember: member,
-        interviewee: member,
-        interaction,
-      });
-    } catch (error) {
-      await interaction
-        .update({
-          content: error.message ?? "Could not start the voice interview.",
-          embeds: [],
-          components: [buildInterviewPanelButton()],
-        })
-        .catch(() =>
-          interaction.reply({
-            content: error.message ?? "Could not start the voice interview.",
-            ephemeral: true,
-          }),
-        );
-    }
-
-    return true;
-  }
-
-  if (interaction.isButton() && interaction.customId === TYPE_REPORT_ID) {
-    await interaction.update({
-      content: "Select the member you are reporting:",
-      embeds: [],
-      components: [buildReportUserSelect()],
-    });
-    return true;
-  }
-
-  if (interaction.isButton() && interaction.customId === TYPE_OTHER_ID) {
-    await interaction.deferReply({ ephemeral: true });
-    await createOtherTicket(interaction);
+    await routeSupportType(interaction, interaction.customId);
     return true;
   }
 

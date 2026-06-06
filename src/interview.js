@@ -252,7 +252,9 @@ async function promptInterviewRoleplayName(client, { guild, textChannel, hostMem
     interaction &&
     interaction.user.id === interviewee.id &&
     (interaction.isChatInputCommand() ||
-      (interaction.isButton() && SELF_SERVE_INTERVIEW_ENTRY_IDS.has(interaction.customId)))
+      (interaction.isButton() && SELF_SERVE_INTERVIEW_ENTRY_IDS.has(interaction.customId)) ||
+      (interaction.isStringSelectMenu() &&
+        SELF_SERVE_INTERVIEW_ENTRY_IDS.has(interaction.values[0])))
   ) {
     await interaction.showModal(buildRoleplayNameModal(guild.id, interviewee.id));
     return;

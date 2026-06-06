@@ -276,7 +276,11 @@ function buildReviewButtons(appId) {
 }
 
 async function handleSupervisorExamInteraction(interaction) {
-  if (interaction.isButton() && interaction.customId === TYPE_SUPERVISOR_EXAM_ID) {
+  const isSupervisorExamRequest =
+    (interaction.isButton() && interaction.customId === TYPE_SUPERVISOR_EXAM_ID) ||
+    (interaction.isStringSelectMenu() && interaction.values[0] === TYPE_SUPERVISOR_EXAM_ID);
+
+  if (isSupervisorExamRequest) {
     const member = interaction.member;
     if (!member?.roles?.cache?.has(REQUIRED_ROLE_ID)) {
       await interaction.reply({
